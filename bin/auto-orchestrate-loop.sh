@@ -21,7 +21,7 @@ if [[ $LOAD -gt 8 ]] || [[ $FREE -lt 50000 ]]; then
 fi
 
 # Pick a real task: one TODO/FIXME from a randomly-chosen project
-TASK_INFO=$(/opt/homebrew/bin/python3 <<'PYEOF'
+TASK_INFO=$(python3 <<'PYEOF'
 import os, random, re, subprocess, json
 from pathlib import Path
 
@@ -38,7 +38,7 @@ if not PROJECTS:
 
 random.shuffle(PROJECTS)
 for proj in PROJECTS:
-    cmd = ['/opt/homebrew/bin/rg', '--no-heading', '-n', '-m', '5',
+    cmd = ['rg', '--no-heading', '-n', '-m', '5',
            '--type', 'py', '--type', 'ts', '--type', 'go', '--type', 'sh',
            '-g', '!node_modules', '-g', '!.venv', '-g', '!__pycache__',
            '-g', '!.git', '-g', '!dist', '-g', '!build',
@@ -77,11 +77,11 @@ if [[ -z "$TASK_INFO" ]] || [[ "$TASK_INFO" == "{}" ]]; then
     exit 0
 fi
 
-PROJECT=$(echo "$TASK_INFO" | /usr/bin/python3 -c "import json,sys; print(json.loads(sys.stdin.read())['project'])")
-PROJ_NAME=$(echo "$TASK_INFO" | /usr/bin/python3 -c "import json,sys; print(json.loads(sys.stdin.read())['project_name'])")
-FILE=$(echo "$TASK_INFO" | /usr/bin/python3 -c "import json,sys; print(json.loads(sys.stdin.read())['file'])")
-LINE=$(echo "$TASK_INFO" | /usr/bin/python3 -c "import json,sys; print(json.loads(sys.stdin.read())['line'])")
-CONTENT=$(echo "$TASK_INFO" | /usr/bin/python3 -c "import json,sys; print(json.loads(sys.stdin.read())['content'])")
+PROJECT=$(echo "$TASK_INFO" | python3 -c "import json,sys; print(json.loads(sys.stdin.read())['project'])")
+PROJ_NAME=$(echo "$TASK_INFO" | python3 -c "import json,sys; print(json.loads(sys.stdin.read())['project_name'])")
+FILE=$(echo "$TASK_INFO" | python3 -c "import json,sys; print(json.loads(sys.stdin.read())['file'])")
+LINE=$(echo "$TASK_INFO" | python3 -c "import json,sys; print(json.loads(sys.stdin.read())['line'])")
+CONTENT=$(echo "$TASK_INFO" | python3 -c "import json,sys; print(json.loads(sys.stdin.read())['content'])")
 
 # Per-task throttle: don't redo same TODO within 4 hours
 TASK_HASH=$(echo "${PROJ_NAME}:${FILE}:${LINE}" | md5 | cut -c1-12)

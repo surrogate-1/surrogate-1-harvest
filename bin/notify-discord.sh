@@ -39,7 +39,7 @@ esac
 
 # Truncate body to Discord embed limit (4096) and escape JSON
 BODY_TRUNC="${BODY:0:3900}"
-BODY_JSON=$(/usr/bin/python3 -c "
+BODY_JSON=$(python3 -c "
 import json, sys
 print(json.dumps(sys.argv[1]))
 " "$BODY_TRUNC")

@@ -53,25 +53,25 @@ echo "[$(date '+%H:%M:%S')] $PRIO_ID start ($PRIO_PROJECT: $PRIO_TITLE)" >> "$LO
 # -------- Context: repo map + RAG-grounded code examples (anti-hallucination) --------
 REPO_MAP=""
 MAP_FILE="$SHARED/repo-maps/${PRIO_PROJECT}.md"
-[[ -f "$MAP_FILE" ]] && REPO_MAP=$(/usr/bin/head -c 3000 "$MAP_FILE")
+[[ -f "$MAP_FILE" ]] && REPO_MAP=$(head -c 3000 "$MAP_FILE")
 
 # RAG: fetch real code examples from THIS project's actual codebase via FTS
 # Grounds the model in real APIs/imports/patterns instead of hallucinating
 RAG_EXAMPLES=""
 if [[ -x "$HOME/.claude/bin/ask-sqlite.py" ]]; then
-    RAG_EXAMPLES=$(/usr/bin/python3 "$HOME/.claude/bin/ask-sqlite.py" \
-        "$PRIO_PROJECT $PRIO_TITLE" 2>/dev/null | /usr/bin/head -c 2500)
+    RAG_EXAMPLES=$(python3 "$HOME/.claude/bin/ask-sqlite.py" \
+        "$PRIO_PROJECT $PRIO_TITLE" 2>/dev/null | head -c 2500)
 fi
 
 # Few-shot: 1 recent ACCEPTED output (quality >=7) as anti-hallucination anchor
 FEWSHOT=""
-for review in $(ls -t "$HOME/.hermes/workspace/qwen-coder-reviews/"*.json 2>/dev/null | /usr/bin/head -20); do
-    if /usr/bin/grep -l '"quality_score": *[789]' "$review" > /dev/null 2>&1 || \
-       /usr/bin/grep -l '"quality_score": *10' "$review" > /dev/null 2>&1; then
+for review in $(ls -t "$HOME/.hermes/workspace/qwen-coder-reviews/"*.json 2>/dev/null | head -20); do
+    if grep -l '"quality_score": *[789]' "$review" > /dev/null 2>&1 || \
+       grep -l '"quality_score": *10' "$review" > /dev/null 2>&1; then
         OUT_FILE=$(basename "$review" .review.json)
         OUT_PATH="$HOME/.hermes/workspace/qwen-coder/${OUT_FILE}.md"
         if [[ -f "$OUT_PATH" ]]; then
-            FEWSHOT=$(/usr/bin/head -c 1500 "$OUT_PATH")
+            FEWSHOT=$(head -c 1500 "$OUT_PATH")
             break
         fi
     fi
@@ -79,8 +79,8 @@ done
 
 # Inject recent REJECTIONS as anti-patterns (what NOT to do) — last 3 rejected reasons
 ANTI_PATTERNS=""
-for review in $(ls -t "$HOME/.hermes/workspace/qwen-coder-reviews/"*.json 2>/dev/null | /usr/bin/head -10); do
-    bugs=$(/usr/bin/python3 -c "
+for review in $(ls -t "$HOME/.hermes/workspace/qwen-coder-reviews/"*.json 2>/dev/null | head -10); do
+    bugs=$(python3 -c "
 import json, sys, re
 try:
     txt = open('$review').read()
@@ -94,7 +94,7 @@ except: pass
 " 2>/dev/null)
     [[ -n "$bugs" ]] && ANTI_PATTERNS="$ANTI_PATTERNS$bugs"$'\n'
 done
-ANTI_PATTERNS=$(echo "$ANTI_PATTERNS" | /usr/bin/head -8)
+ANTI_PATTERNS=$(echo "$ANTI_PATTERNS" | head -8)
 
 PROMPT=$(cat <<EOF
 You are qwen-coder (local, always-on). Implement this priority.
@@ -169,7 +169,7 @@ body = {
 print(json.dumps(body))
 PYEOF
 )
-RESP=$(/usr/bin/curl -sS --max-time 180 \
+RESP=$(curl -sS --max-time 180 \
     http://localhost:11434/v1/chat/completions \
     -H 'Content-Type: application/json' \
     -d "$BODY" 2>>"$LOG")

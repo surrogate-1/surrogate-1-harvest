@@ -20,7 +20,7 @@ SHARED="$HOME/.hermes/workspace/swarm-shared"
 mkdir -p "$(dirname "$LOG")"
 
 # Try Unix socket first, then fall back to TCP 127.0.0.1:6379
-REDIS_SOCK=$(/usr/bin/find /var/folders /tmp -name 'redis.socket' -type s 2>/dev/null | /usr/bin/head -1)
+REDIS_SOCK=$(find /var/folders /tmp -name 'redis.socket' -type s 2>/dev/null | head -1)
 REDIS_MODE=""
 if [[ -n "$REDIS_SOCK" ]] && [[ -S "$REDIS_SOCK" ]]; then
     REDIS_MODE="sock"
@@ -34,7 +34,7 @@ fi
 
 [[ ! -f "$SHARED/priority.json" ]] && exit 0
 
-/usr/bin/python3 <<PYEOF 2>>"$LOG"
+python3 <<PYEOF 2>>"$LOG"
 import json
 import subprocess
 from pathlib import Path

@@ -29,7 +29,7 @@ START=$(date +%s)
 echo "[$(date +%H:%M:%S)] tune cycle start" >> "$LOG"
 
 # Iterate slots, focus on ones with consecutive_zero_runs > 0 first
-/opt/homebrew/bin/python3 <<PYEOF >> "$LOG" 2>&1
+python3 <<PYEOF >> "$LOG" 2>&1
 import os, re, json, sqlite3, time, urllib.request, urllib.error, urllib.parse
 
 TOKEN = "$TOKEN"

@@ -40,7 +40,7 @@ export AGENT_TASK="$TASK"
 export AGENT_MAX_STEPS="$MAX_STEPS"
 export AGENT_MODEL_OVERRIDE="$MODEL_OVERRIDE"
 
-/usr/bin/python3 <<'PYEOF'
+python3 <<'PYEOF'
 import sys, os, json, re, sqlite3, subprocess, urllib.request, urllib.error, time, uuid
 from datetime import datetime
 from pathlib import Path
@@ -138,7 +138,7 @@ def tool_glob(pattern, path='.'):
 def tool_grep(pattern, path='.', glob='*', context=0):
     base = os.path.expanduser(path)
     ctx = f'-C {context}' if context else ''
-    cmd = f"/usr/bin/grep -rn {ctx} --include='{glob}' -E {subprocess.list2cmdline([pattern])} {base} 2>/dev/null | head -50"
+    cmd = f"grep -rn {ctx} --include='{glob}' -E {subprocess.list2cmdline([pattern])} {base} 2>/dev/null | head -50"
     r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=15)
     return {'matches': r.stdout[:5000]}
 

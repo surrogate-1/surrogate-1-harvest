@@ -15,7 +15,7 @@ mkdir -p "$(dirname "$LOG")" "$(dirname "$OUT")"
 TARGET="${1:-}"
 export LEDGER OUT GITHUB_TOKEN GITHUB_TOKEN_POOL TARGET
 
-/opt/homebrew/bin/python3 <<'PYEOF' 2>&1 | tee -a "$LOG"
+python3 <<'PYEOF' 2>&1 | tee -a "$LOG"
 import os, json, urllib.request, urllib.parse, re, time, base64, sqlite3, random
 from datetime import datetime
 from pathlib import Path

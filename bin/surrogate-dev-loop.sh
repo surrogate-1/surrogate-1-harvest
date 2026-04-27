@@ -33,7 +33,7 @@ SEARCH_ROOTS=(
 
 # ── Task generators (pick one per cycle, weighted random) ────────────────────
 pick_task() {
-    /usr/bin/python3 <<'PYEOF'
+    python3 <<'PYEOF'
 import os, random, re, subprocess, json
 from pathlib import Path
 
@@ -47,7 +47,7 @@ ROOTS = [p for p in ROOTS if p.exists()]
 
 def find_todo():
     """Find a TODO/FIXME/XXX/HACK comment in user code (uses ripgrep — fast)."""
-    cmd = ['/opt/homebrew/bin/rg', '--no-heading', '-n', '-m', '3',
+    cmd = ['rg', '--no-heading', '-n', '-m', '3',
            '--type', 'py', '--type', 'sh', '--type', 'ts', '--type', 'go',
            '-g', '!node_modules', '-g', '!.venv', '-g', '!__pycache__',
            '-g', '!.git', '-g', '!dist', '-g', '!build',
@@ -178,7 +178,7 @@ load_reflexion_lessons() {
     local kind="$1"
     local file="$HOME/.hermes/workspace/reflexion/lessons-${kind}.jsonl"
     [[ ! -f "$file" ]] && { echo ""; return; }
-    /usr/bin/python3 <<PYEOF
+    python3 <<PYEOF
 import json
 from pathlib import Path
 p = Path("$file")
@@ -209,7 +209,7 @@ save_reflexion_lesson() {
     local kind="$1" task="$2" response="$3" duration="$4"
     local file="$HOME/.hermes/workspace/reflexion/lessons-${kind}.jsonl"
     mkdir -p "$(dirname "$file")"
-    /usr/bin/python3 <<PYEOF
+    python3 <<PYEOF
 import json, re, sys
 from pathlib import Path
 from datetime import datetime
@@ -259,11 +259,11 @@ run_cycle() {
     fi
 
     local kind path line task_text context
-    kind=$(echo "$task_json" | /usr/bin/python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('kind',''))")
-    path=$(echo "$task_json" | /usr/bin/python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('path',''))")
-    line=$(echo "$task_json" | /usr/bin/python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('line',0))")
-    task_text=$(echo "$task_json" | /usr/bin/python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('task',''))")
-    context=$(echo "$task_json" | /usr/bin/python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('context',''))")
+    kind=$(echo "$task_json" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('kind',''))")
+    path=$(echo "$task_json" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('path',''))")
+    line=$(echo "$task_json" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('line',0))")
+    task_text=$(echo "$task_json" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('task',''))")
+    context=$(echo "$task_json" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('context',''))")
 
     local id="$(date +%s)-${kind}"
     local out="$OUT_DIR/${id}.md"
@@ -285,7 +285,7 @@ $context
 
     # Call Surrogate-1 via Ollama (keep_alive=5m so model stays warm between cycles)
     local body
-    body=$(PROMPT_VAR="$prompt" /usr/bin/python3 <<'PYEOF'
+    body=$(PROMPT_VAR="$prompt" python3 <<'PYEOF'
 import json, os
 print(json.dumps({
     "model": "surrogate-1",
@@ -298,13 +298,13 @@ print(json.dumps({
 PYEOF
 )
     local resp
-    resp=$(/usr/bin/curl -sS --max-time 120 \
+    resp=$(curl -sS --max-time 120 \
         http://localhost:11434/v1/chat/completions \
         -H 'Content-Type: application/json' \
         -d "$body" 2>/dev/null)
 
     local answer
-    answer=$(echo "$resp" | /usr/bin/python3 -c "
+    answer=$(echo "$resp" | python3 -c "
 import json, sys
 try:
     d = json.load(sys.stdin)
@@ -342,7 +342,7 @@ EOF
     save_reflexion_lesson "$kind" "$task_text" "$answer" "$dur"
 
     # Append to training-data candidate (will be reviewed before promoting to JSONL)
-    /usr/bin/python3 <<PYEOF
+    python3 <<PYEOF
 import json
 from pathlib import Path
 candidate = Path.home() / 'axentx/surrogate/data/training-jsonl/local-dev-pending.jsonl'

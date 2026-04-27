@@ -47,7 +47,7 @@ $prompt
 Output your work to $output_file using the \`write\` tool when done.
 Previous artifacts available in: $WORKDIR/
 CWD: $(pwd)"
-    ~/.claude/bin/surrogate -p "$agent_prompt" 2>&1 | /usr/bin/head -50 | sed 's/^/  /'
+    ~/.claude/bin/surrogate -p "$agent_prompt" 2>&1 | head -50 | sed 's/^/  /'
     # Check if file written
     if [[ -f "$output_file" ]]; then
         echo "${GR}  ⎿ $role done → $(basename "$output_file") ($(wc -c < "$output_file") bytes)${R}"
@@ -112,7 +112,7 @@ Task: $TASK
 " "$QA_OUT"
 
 # ═══ Stage 4: OPS (if task mentions infra) ═══
-if echo "$TASK" | /usr/bin/grep -iqE "deploy|docker|helm|k8s|terraform|cicd|ci/cd"; then
+if echo "$TASK" | grep -iqE "deploy|docker|helm|k8s|terraform|cicd|ci/cd"; then
     OPS_OUT="$WORKDIR/4-ops-checklist.md"
     echo ""
     echo "${MA}${B}═══ Stage 4/5: OPS${R} ${D}— deploy + infra${R}"
@@ -167,7 +167,7 @@ ls -la "$WORKDIR/" 2>&1 | tail -n +2 | awk '{print "  " $9}' | grep -v '^  $'
 # Show verdict + auto-commit if APPROVED
 VERDICT_TEXT=""
 if [[ -f "$REVIEW_OUT" ]]; then
-    VERDICT_TEXT=$(grep -iE "verdict|APPROVE|REWORK|REJECT" "$REVIEW_OUT" | /usr/bin/head -3)
+    VERDICT_TEXT=$(grep -iE "verdict|APPROVE|REWORK|REJECT" "$REVIEW_OUT" | head -3)
     echo ""
     echo "${B}▸ Final verdict:${R}"
     echo "$VERDICT_TEXT" | sed 's/^/  /'
@@ -198,7 +198,7 @@ if echo "$VERDICT_TEXT" | grep -qi "APPROVE"; then
 elif echo "$VERDICT_TEXT" | grep -qi "REWORK"; then
     echo ""
     echo "${YE}${B}▸ Reviewer requested REWORK — re-running dev stage${R}"
-    REWORK_NOTES=$(grep -A5 -i "REWORK" "$REVIEW_OUT" | /usr/bin/head -8)
+    REWORK_NOTES=$(grep -A5 -i "REWORK" "$REVIEW_OUT" | head -8)
     DEV_OUT2="$WORKDIR/2b-dev-rework.md"
     call_agent "dev" "
 REWORK requested by reviewer. Fix the following issues:

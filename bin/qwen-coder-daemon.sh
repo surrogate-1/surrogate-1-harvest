@@ -8,7 +8,7 @@ LOG="$HOME/.claude/logs/qwen-coder-daemon.log"
 mkdir -p "$(dirname "$LOG")"
 
 # Resolve Redis: Unix socket → TCP fallback. Build a redis-cli arg array reused below.
-REDIS_SOCK=$(/usr/bin/find /var/folders /tmp -name 'redis.socket' -type s 2>/dev/null | /usr/bin/head -1)
+REDIS_SOCK=$(find /var/folders /tmp -name 'redis.socket' -type s 2>/dev/null | head -1)
 if [[ -n "$REDIS_SOCK" ]] && [[ -S "$REDIS_SOCK" ]]; then
     RCLI=(redis-cli -s "$REDIS_SOCK")
 elif redis-cli -h 127.0.0.1 -p 6379 PING 2>/dev/null | grep -q PONG; then
@@ -26,10 +26,10 @@ while true; do
     RESULT=$("${RCLI[@]}" BLPOP 'hermes:work:coding:qwen-local' 30 2>/dev/null)
     [[ -z "$RESULT" ]] && continue
 
-    PAYLOAD=$(echo "$RESULT" | /usr/bin/tail -1)
+    PAYLOAD=$(echo "$RESULT" | tail -1)
     [[ -z "$PAYLOAD" ]] && continue
 
-    PRIO_ID=$(echo "$PAYLOAD" | /usr/bin/python3 -c "import json,sys; print(json.loads(sys.stdin.read())['id'])" 2>/dev/null)
+    PRIO_ID=$(echo "$PAYLOAD" | python3 -c "import json,sys; print(json.loads(sys.stdin.read())['id'])" 2>/dev/null)
     [[ -z "$PRIO_ID" ]] && continue
 
     echo "[$(date '+%H:%M:%S')] pulled $PRIO_ID — processing" >> "$LOG"
@@ -45,7 +45,7 @@ while true; do
     # can't race with other workers / stale file locks.
     START=$(date +%s)
     HERMES_PRIO_ID="$PRIO_ID" \
-        "$HOME/.claude/bin/qwen-coder-worker.sh" 2>&1 | /usr/bin/tail -3 >> "$LOG"
+        "$HOME/.claude/bin/qwen-coder-worker.sh" 2>&1 | tail -3 >> "$LOG"
     DUR=$(( $(date +%s) - START ))
     echo "[$(date '+%H:%M:%S')] $PRIO_ID done in ${DUR}s" >> "$LOG"
 

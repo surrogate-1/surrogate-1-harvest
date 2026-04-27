@@ -13,7 +13,7 @@ mkdir -p "$(dirname "$LOG")"
 
 # Redis connection: prefer Unix socket, fall back to TCP 127.0.0.1:6379.
 # REDIS_CLI_ARGS populates either "-s /path/to/socket" or "-h 127.0.0.1 -p 6379".
-REDIS_SOCK=$(/usr/bin/find /var/folders /tmp -name 'redis.socket' -type s 2>/dev/null | /usr/bin/head -1)
+REDIS_SOCK=$(find /var/folders /tmp -name 'redis.socket' -type s 2>/dev/null | head -1)
 if [[ -n "$REDIS_SOCK" ]] && [[ -S "$REDIS_SOCK" ]]; then
     REDIS_CLI_ARGS=(-s "$REDIS_SOCK")
 elif redis-cli -h 127.0.0.1 -p 6379 ping 2>/dev/null | grep -q PONG; then
@@ -29,7 +29,7 @@ while true; do
     # Budget-aware: check token budget before processing
     BUDGET_FILE="$HOME/.hermes/workspace/budget/tokens-$(/bin/date +%Y-%m-%d).json"
     if [[ -f "$BUDGET_FILE" ]]; then
-        STATUS=$(/usr/bin/python3 -c "
+        STATUS=$(python3 -c "
 import json
 try:
     d = json.load(open('$BUDGET_FILE'))
@@ -45,10 +45,10 @@ except: print('OK')" 2>/dev/null)
     RESULT=$(redis-cli "${REDIS_CLI_ARGS[@]}" BLPOP "hermes:work:coding:$PROVIDER" 30 2>/dev/null)
     [[ -z "$RESULT" ]] && continue
 
-    PAYLOAD=$(echo "$RESULT" | /usr/bin/tail -1)
+    PAYLOAD=$(echo "$RESULT" | tail -1)
     [[ -z "$PAYLOAD" ]] && continue
 
-    PRIO_ID=$(echo "$PAYLOAD" | /usr/bin/python3 -c "import json,sys; print(json.loads(sys.stdin.read())['id'])" 2>/dev/null)
+    PRIO_ID=$(echo "$PAYLOAD" | python3 -c "import json,sys; print(json.loads(sys.stdin.read())['id'])" 2>/dev/null)
     [[ -z "$PRIO_ID" ]] && continue
 
     # Worker lock (provider-specific so 6 daemons can work in parallel on same queue)
@@ -65,7 +65,7 @@ except: print('OK')" 2>/dev/null)
     # and works on exactly what the daemon locked (avoids "no free priority"
     # dead-ends when the file lock was touched earlier for this same PRIO_ID).
     HERMES_PRIO_ID="$PRIO_ID" \
-        "$HOME/.claude/bin/dev-cloud-worker.sh" "$PROVIDER" 2>&1 | /usr/bin/tail -3 >> "$LOG"
+        "$HOME/.claude/bin/dev-cloud-worker.sh" "$PROVIDER" 2>&1 | tail -3 >> "$LOG"
     RC=${PIPESTATUS[0]}
     DUR=$(( $(date +%s) - START ))
     echo "[$(date '+%H:%M:%S')] $PROVIDER $PRIO_ID done in ${DUR}s (rc=$RC)" >> "$LOG"

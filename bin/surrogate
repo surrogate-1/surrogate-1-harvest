@@ -199,7 +199,7 @@ run_agent() {
     export AGENT_EFFORT="$EFFORT"
     export AGENT_CWD="$(pwd)"
 
-    /usr/bin/python3 <<'PYEOF'
+    python3 <<'PYEOF'
 import os, sys, json, re, sqlite3, subprocess, urllib.request, urllib.error, time
 from datetime import datetime
 from pathlib import Path
@@ -460,7 +460,7 @@ repl() {
                 ;;
             /memory) ls -lh ~/.claude/state/surrogate-memory/ 2>&1 | head -10 ;;
             /cost)
-                bash -c 'source ~/.hermes/.env; curl -s -H "Authorization: Bearer $OPENROUTER_API_KEY" https://openrouter.ai/api/v1/auth/key' 2>&1 | /usr/bin/python3 -c "import json,sys; d=json.load(sys.stdin).get('data',{}); print(f'  OpenRouter: \${d.get(\"usage\",0):.4f}')"
+                bash -c 'source ~/.hermes/.env; curl -s -H "Authorization: Bearer $OPENROUTER_API_KEY" https://openrouter.ai/api/v1/auth/key' 2>&1 | python3 -c "import json,sys; d=json.load(sys.stdin).get('data',{}); print(f'  OpenRouter: \${d.get(\"usage\",0):.4f}')"
                 ;;
             /*) echo "${GY}unknown: $line — try /help${R}" ;;
             *)  run_agent "$line" ;;
@@ -500,7 +500,7 @@ auto_dev_mode() {
         # Drive tasks from plan until all done
         while true; do
             # Pop next pending task from plan
-            NEXT_TASK=$(/usr/bin/python3 <<'PYEOF'
+            NEXT_TASK=$(python3 <<'PYEOF'
 import sys, re
 from pathlib import Path
 plan_file = Path.home() / '.surrogate' / 'active-plan.md'
@@ -519,7 +519,7 @@ PYEOF
             echo "${BCY}${B}▸ Next task:${R} $NEXT_TASK"
             bash ~/.claude/bin/surrogate-orchestrate.sh "$NEXT_TASK"
             # Mark done in plan
-            /usr/bin/python3 <<PYEOF
+            python3 <<PYEOF
 from pathlib import Path
 plan_file = Path.home() / '.surrogate' / 'active-plan.md'
 if plan_file.exists():
