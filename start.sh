@@ -2,10 +2,16 @@
 # Hermes start orchestrator for HF Space.
 # Boots: persistent /data mount → Redis → Ollama → axentx repos → daemons → status server.
 set -uo pipefail
+# Trace ON for boot — finds hangs immediately. Disable later if logs too noisy.
+PS4='[$(date +%H:%M:%S)] +${LINENO}: '
+set -x
 
 LOG_DIR="${HOME}/.claude/logs"
 mkdir -p "$LOG_DIR"
-echo "[$(date +%H:%M:%S)] hermes-hf-space boot start" | tee "$LOG_DIR/boot.log"
+echo "[$(date +%H:%M:%S)] hermes-hf-space boot start"
+echo "[$(date +%H:%M:%S)] hermes-hf-space boot start" >> "$LOG_DIR/boot.log"
+# Echo all subsequent stdout so HF run-logs show progress
+exec > >(tee -a "$LOG_DIR/boot.log") 2>&1
 
 # ── 1. Persistent data — symlink state dirs to /data (HF persistent mount) ──
 DATA="/data"
