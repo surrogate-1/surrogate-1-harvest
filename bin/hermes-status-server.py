@@ -123,6 +123,17 @@ def _ollama_models() -> list[str]:
         return []
 
 
+
+def _dedup_count() -> int:
+    """Total deduped hashes — single source of truth."""
+    db = HOME / ".surrogate/state/dedup.db"
+    try:
+        with sqlite3.connect(str(db), timeout=2) as c:
+            return c.execute("SELECT COUNT(*) FROM seen_hashes").fetchone()[0]
+    except Exception:
+        return 0
+
+
 @app.get("/")
 def root() -> JSONResponse:
     return JSONResponse({
@@ -137,6 +148,7 @@ def root() -> JSONResponse:
         "episodes": _episodes_count_v2(),
         "daemons_running": _daemons(),
         "models_loaded": _ollama_models(),
+        "dedup_hashes": _dedup_count(),
     })
 
 
@@ -154,7 +166,7 @@ def log_tail(name: str, lines: int = 100) -> PlainTextResponse:
         "auto-orchestrate-loop", "training-push", "ollama", "discord-bot",
         "hermes-discord-bot", "surrogate-research-loop", "surrogate-research-apply",
         "surrogate-dev-loop", "domain-scrape-loop", "github-domain-scrape",
-        "qwen-coder", "git-clone", "git-pull", "redis", "github-agentic-crawler", "ollama-pull-granite", "synthetic-data", "self-ingest", "scrape-sre-postmortems", "refresh-cve-feed",
+        "qwen-coder", "git-clone", "git-pull", "redis", "dedup-bootstrap", "github-agentic-crawler", "ollama-pull-granite", "synthetic-data", "self-ingest", "scrape-sre-postmortems", "refresh-cve-feed",
         "ollama-pull-coder", "ollama-pull-devstral", "ollama-pull-fallback",
         "ollama-pull-yicoder", "ollama-pull-embed", "ollama-pull-light",
     }

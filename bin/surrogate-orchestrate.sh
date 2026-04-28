@@ -260,9 +260,18 @@ PYEOF
 # ── Push every task pair to HF training dataset (background) ──
 push_training_pair() {
     local source="$1" prompt="$2" content="$3"
+    # Central dedup — write only if prompt is new (single source of truth)
     python3 - "$source" "$prompt" "$content" "$TRAINING_LOG" <<'PYEOF' 2>/dev/null &
 import sys, json, time, os
+sys.path.insert(0, os.path.expanduser("~/.surrogate/bin/lib"))
+try:
+    from dedup import DedupStore
+    HAS_DEDUP = True
+except ImportError:
+    HAS_DEDUP = False
 src, p, c, log = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+if HAS_DEDUP and not DedupStore.is_new(p, source=src):
+    sys.exit(0)
 pair = {
     'ts': time.time(),
     'source': src,

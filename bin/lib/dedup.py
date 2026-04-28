@@ -1,0 +1,141 @@
+"""
+Central dedup hash store — single source of truth for "have we seen this pair?"
+
+Every writer (dataset-enrich, GitHub crawler, agentic crawler, orchestrate,
+threat-intel, SRE postmortem, synthetic-data) MUST call DedupStore.is_new()
+before appending to training-pairs.jsonl.
+
+Hash: md5(prompt[:500])[:16] — 64-bit collision space, ~1 in 10^19 false-dup
+rate at our scale. Stored in ~/.surrogate/state/dedup.db (SQLite, thread-safe).
+
+Usage:
+    from lib.dedup import DedupStore
+    if DedupStore.is_new(prompt, source="github-crawl-pr"):
+        write_pair(...)
+    # else skip
+"""
+from __future__ import annotations
+import hashlib
+import sqlite3
+import threading
+import time
+from pathlib import Path
+from typing import Iterable
+
+DB_PATH = Path.home() / ".surrogate/state/dedup.db"
+
+
+class DedupStore:
+    _lock = threading.Lock()
+    _conn: sqlite3.Connection | None = None
+
+    @classmethod
+    def _connection(cls) -> sqlite3.Connection:
+        if cls._conn is None:
+            DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+            c = sqlite3.connect(str(DB_PATH), check_same_thread=False, timeout=10)
+            c.execute("PRAGMA journal_mode=WAL")
+            c.execute("PRAGMA synchronous=NORMAL")
+            c.executescript("""
+                CREATE TABLE IF NOT EXISTS seen_hashes (
+                    hash    TEXT PRIMARY KEY,
+                    source  TEXT NOT NULL,
+                    ts      INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_seen_source ON seen_hashes(source);
+                CREATE INDEX IF NOT EXISTS idx_seen_ts ON seen_hashes(ts);
+            """)
+            cls._conn = c
+        return cls._conn
+
+    @classmethod
+    def hash_key(cls, prompt: str) -> str:
+        return hashlib.md5(prompt[:500].encode("utf-8", errors="ignore")).hexdigest()[:16]
+
+    @classmethod
+    def is_new(cls, prompt: str, source: str = "unknown") -> bool:
+        """Atomic check-and-insert. Returns True if hash newly added (writer should
+        emit the pair); False if already seen (writer should skip)."""
+        if not prompt:
+            return False
+        h = cls.hash_key(prompt)
+        with cls._lock:
+            con = cls._connection()
+            cur = con.execute(
+                "INSERT OR IGNORE INTO seen_hashes (hash, source, ts) VALUES (?, ?, ?)",
+                (h, source, int(time.time())),
+            )
+            con.commit()
+            return cur.rowcount > 0
+
+    @classmethod
+    def bulk_seen(cls, prompts: Iterable[str], source: str = "bootstrap") -> int:
+        """Mark a batch of prompts as seen (used to bootstrap from existing data).
+        Returns count newly added."""
+        rows = [(cls.hash_key(p), source, int(time.time())) for p in prompts if p]
+        if not rows:
+            return 0
+        with cls._lock:
+            con = cls._connection()
+            before = con.execute("SELECT COUNT(*) FROM seen_hashes").fetchone()[0]
+            con.executemany(
+                "INSERT OR IGNORE INTO seen_hashes (hash, source, ts) VALUES (?, ?, ?)",
+                rows,
+            )
+            con.commit()
+            after = con.execute("SELECT COUNT(*) FROM seen_hashes").fetchone()[0]
+            return after - before
+
+    @classmethod
+    def stats(cls) -> dict:
+        with cls._lock:
+            con = cls._connection()
+            total = con.execute("SELECT COUNT(*) FROM seen_hashes").fetchone()[0]
+            by_source = dict(con.execute(
+                "SELECT source, COUNT(*) FROM seen_hashes GROUP BY source ORDER BY 2 DESC LIMIT 20"
+            ).fetchall())
+            mn, mx = con.execute("SELECT MIN(ts), MAX(ts) FROM seen_hashes").fetchone()
+        return {"total": total, "by_source": by_source, "first_ts": mn, "latest_ts": mx}
+
+
+def write_pair_dedup(record: dict, output_path: Path | str, prompt: str | None = None) -> bool:
+    """Convenience helper: only append record if its prompt is new.
+    Returns True if written, False if skipped as duplicate.
+    """
+    p = prompt or record.get("prompt") or record.get("instruction") or ""
+    if not p:
+        return False
+    src = record.get("source", "unknown")
+    if not DedupStore.is_new(p, src):
+        return False
+    import json as _json
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with open(out, "a") as f:
+        f.write(_json.dumps(record, ensure_ascii=False) + "\n")
+    return True
+
+
+if __name__ == "__main__":
+    import sys, json
+    if len(sys.argv) > 1 and sys.argv[1] == "stats":
+        print(json.dumps(DedupStore.stats(), indent=2))
+    elif len(sys.argv) > 1 and sys.argv[1] == "bootstrap":
+        # Read jsonl from stdin, mark all prompts as seen
+        added = 0
+        prompts = []
+        src = sys.argv[2] if len(sys.argv) > 2 else "bootstrap"
+        for line in sys.stdin:
+            try:
+                d = json.loads(line)
+                p = d.get("prompt") or d.get("instruction")
+                if p: prompts.append(p)
+                if len(prompts) >= 5000:
+                    added += DedupStore.bulk_seen(prompts, src)
+                    prompts = []
+            except: pass
+        if prompts:
+            added += DedupStore.bulk_seen(prompts, src)
+        print(f"bootstrapped {added} new hashes (source={src})")
+    else:
+        print("usage: dedup.py stats | bootstrap [source] < input.jsonl")

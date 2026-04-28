@@ -165,9 +165,14 @@ DATASETS = [
     # NOTE: SWE-bench/SWE-bench_Verified + bigcode/bigcodebench RESERVED AS EVAL ONLY.
 ]
 
-# 1. Existing axentx hashes for dedup
-existing_hashes = set()
-print("Loading existing axentx pairs for dedup...", flush=True)
+# 1. Use CENTRAL dedup store (single source of truth across all writers)
+import sys as _sys
+_sys.path.insert(0, str(Path.home() / ".surrogate/bin/lib"))
+from dedup import DedupStore
+
+print(f"Central dedup store: {DedupStore.stats()['total']:,} hashes already known", flush=True)
+existing_hashes = set()  # legacy local cache, kept for back-compat — central is canonical
+print("Loading legacy axentx pairs for dedup (one-time bootstrap)...", flush=True)
 for path in [Path.home() / 'axentx/surrogate/data/training-jsonl',
              Path.home() / '.surrogate/training-pairs.jsonl']:
     if path.is_dir():
@@ -428,11 +433,10 @@ with open(out_path, "w") as out:
                 if not prompt or not response or len(prompt) < 20 or len(response) < 20:
                     continue
 
-                h = hashlib.md5(prompt[:200].encode()).hexdigest()[:16]
-                if h in existing_hashes:
+                # Central dedup store — atomic, shared with every other writer
+                if not DedupStore.is_new(prompt, source=f"enrich-{slug}"):
                     dup += 1
                     continue
-                existing_hashes.add(h)
 
                 out.write(json.dumps({
                     "source": slug,

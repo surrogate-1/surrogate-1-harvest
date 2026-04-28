@@ -22,6 +22,13 @@ echo "[$(date +%H:%M:%S)] SRE postmortem scrape start" | tee -a "$LOG"
 python3 - "$PAIRS" "$SEEN" >> "$LOG" 2>&1 <<'PYEOF'
 import sys, json, urllib.request, urllib.parse, re, time, os
 from datetime import datetime
+sys.path.insert(0, os.path.expanduser("~/.surrogate/bin/lib"))
+try:
+    from dedup import DedupStore
+    HAS_DEDUP = True
+except ImportError:
+    HAS_DEDUP = False
+
 pairs_path, seen_path = sys.argv[1], sys.argv[2]
 
 # Load already-seen URLs
@@ -105,11 +112,15 @@ for title, url in all_links[:50]:
         if not summary or len(summary) < 200:
             errors += 1
             continue
+        prompt = f"Tell me about the {title} incident — what happened, why, and what to learn from it."
+        if HAS_DEDUP and not DedupStore.is_new(prompt, source="sre-postmortem"):
+            with open(seen_path, "a") as f: f.write(url + "\n")
+            continue
         pair = {
             "ts": time.time(),
             "source": "sre-postmortem",
             "url": url, "title": title,
-            "prompt": f"Tell me about the {title} incident — what happened, why, and what to learn from it.",
+            "prompt": prompt,
             "response": summary,
         }
         with open(pairs_path, "a") as f:

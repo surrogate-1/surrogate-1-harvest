@@ -53,14 +53,18 @@ if [[ -d "$DATA" ]] && [[ -w "$DATA" ]]; then
     fi
 
     # ── One-time offset reset: skip polluted agentic-crawler placeholder backlog ──
-    # Up to 2026-04-28 the crawler wrote ~35K placeholder pairs ("auto-summary pending").
-    # Those aren't trainable. Reset push offset to current line count to bypass them.
     if [[ ! -f "${HOME}/.surrogate/.offset-reset-done" ]] && [[ -f "${HOME}/.surrogate/training-pairs.jsonl" ]]; then
         CUR=$(wc -l < "${HOME}/.surrogate/training-pairs.jsonl" | tr -d ' ')
         echo "$CUR" > "${HOME}/.surrogate/.training-push-offset"
         echo "$CUR" > "${HOME}/.surrogate/.self-ingest-offset"
         touch "${HOME}/.surrogate/.offset-reset-done"
         echo "[$(date +%H:%M:%S)] one-time offset reset → $CUR (skip placeholder backlog)" >> "$LOG_DIR/boot.log"
+    fi
+
+    # ── One-time central dedup bootstrap from existing data ──────────────
+    if [[ ! -f "${HOME}/.surrogate/.dedup-bootstrap-done" ]]; then
+        echo "[$(date +%H:%M:%S)] running central dedup bootstrap (one-time)" >> "$LOG_DIR/boot.log"
+        nohup bash "${HOME}/.surrogate/bin/dedup-bootstrap.sh" > "$LOG_DIR/dedup-bootstrap.log" 2>&1 &
     fi
 
     echo "[$(date +%H:%M:%S)] persistent /data linked (state, logs, memory, skills, sessions, workspace, ollama, training-pairs)" >> "$LOG_DIR/boot.log"

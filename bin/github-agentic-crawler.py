@@ -336,7 +336,22 @@ def stamp_issue(issue_url: str, repo: str, closed_with_pr: str) -> bool:
 
 
 # ── Output helpers ──────────────────────────────────────────────────────────
+# Central dedup store — guards against ANY duplicate prompt across all daemons
+sys.path.insert(0, str(HOME / ".surrogate/bin/lib"))
+try:
+    from dedup import DedupStore
+    HAS_DEDUP = True
+except ImportError:
+    HAS_DEDUP = False
+
+
 def write_pair(record: dict) -> None:
+    """Append to training-pairs.jsonl only if prompt is new (central dedup)."""
+    prompt = record.get("prompt", "")
+    if not prompt:
+        return
+    if HAS_DEDUP and not DedupStore.is_new(prompt, source=record.get("source", "github-crawler")):
+        return  # already seen by another writer — skip silently
     with db_lock, open(PAIRS, "a") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
