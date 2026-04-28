@@ -12,3 +12,6 @@ beautifulsoup4>=4.12
 feedparser>=6.0
 PyGithub>=2.1
 pyarrow>=15.0.0
+datasets>=3.0.0
+huggingface_hub>=0.25.0
+numpy>=1.26.0
