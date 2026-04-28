@@ -90,12 +90,67 @@ $(head -c 6000 "$prd_file")
     fi
 done
 
-# ── Helper: call LLM directly (skip surrogate -p agent loop entirely) ──
-# Why: agent loop forces tool-use system prompt → models output tool-call attempts
-# instead of clean markdown deliverables. Direct LLM call gives reliable text-in/text-out.
+# ── Load 17 SDLC agent roster (system prompts per role) ──────────────────
+# agents/roster.json defines 17 specialist agents — they were descriptive only.
+# Now WIRED: each orchestrate stage uses the relevant agent's system prompt.
+ROSTER_PATH="$HOME/.surrogate/agents/roster.json"
+
+get_agent_system_prompt() {
+    local role="$1"
+    [[ ! -f "$ROSTER_PATH" ]] && return
+    python3 -c "
+import json, sys
+try:
+    r = json.load(open('$ROSTER_PATH'))
+    print(r.get('agents',{}).get('$role',{}).get('system',''))
+except: pass
+"
+}
+
+# DEV stage routing — pick specialist based on task keywords
+detect_dev_specialist() {
+    local task_lower="${1,,}"
+    if echo "$task_lower" | grep -qE "react|vue|next|svelte|tailwind|css|html|frontend|ui|component|wcag"; then
+        echo "dev-frontend"
+    elif echo "$task_lower" | grep -qE "ios|swift|android|kotlin|react.native|flutter|mobile|app store"; then
+        echo "dev-mobile"
+    elif echo "$task_lower" | grep -qE "sql|postgres|mysql|schema|migration|index|explain|query|database"; then
+        echo "dev-database"
+    elif echo "$task_lower" | grep -qE "api|rest|graphql|grpc|backend|server|endpoint|fastapi|express|gin|axum"; then
+        echo "dev-backend"
+    elif echo "$task_lower" | grep -qE "data|etl|airflow|spark|kafka|dbt|pipeline"; then
+        echo "data-engineer"
+    elif echo "$task_lower" | grep -qE "ml|model|training|inference|lora|fine-tune|rag|embedding"; then
+        echo "ml-engineer"
+    elif echo "$task_lower" | grep -qE "docker|kubernetes|k8s|helm|terraform|cloudformation|deploy"; then
+        echo "devops-engineer"
+    elif echo "$task_lower" | grep -qE "incident|postmortem|sre|slo|sli|observability|monitoring"; then
+        echo "sre-engineer"
+    elif echo "$task_lower" | grep -qE "security|cve|vuln|sast|dast|owasp|penetration"; then
+        echo "devsecops-engineer"
+    else
+        echo "dev-fullstack"
+    fi
+}
+
+# ── Helper: call LLM directly with ROLE-SPECIFIC system prompt ──
 call_agent() {
     local role="$1" prompt="$2" output_file="$3"
-    echo "${CY}▶${R} ${B}$role${R} ${D}working...${R}"
+    # If DEV role, route to specialist based on task
+    local effective_role="$role"
+    if [[ "$role" == "dev" ]]; then
+        effective_role=$(detect_dev_specialist "$TASK")
+        echo "${CY}▶${R} ${B}$role${R} ${D}→ specialist: ${YE}$effective_role${R}"
+    else
+        echo "${CY}▶${R} ${B}$role${R} ${D}working...${R}"
+    fi
+    # Load specialist system prompt from roster
+    local agent_system
+    agent_system=$(get_agent_system_prompt "$effective_role")
+    if [[ -z "$agent_system" ]]; then
+        # Fallback for stages with non-roster names
+        agent_system="You are a senior $effective_role. Apply best practices. Output deliverable directly."
+    fi
 
     local prior_artifacts=""
     if [[ -d "$WORKDIR" ]]; then
@@ -105,7 +160,11 @@ call_agent() {
     # Write prompt to temp file (avoids bash quoting hell with multi-KB prompts)
     local prompt_file="$WORKDIR/.prompt-${role//[^a-zA-Z0-9]/_}.txt"
     cat > "$prompt_file" <<EOF
-ROLE: $role
+=== AGENT SYSTEM PROMPT (from roster: $effective_role) ===
+$agent_system
+=== END SYSTEM ===
+
+ROLE TASK ($role):
 
 $prompt
 ${RESEARCH_CONTEXT}
