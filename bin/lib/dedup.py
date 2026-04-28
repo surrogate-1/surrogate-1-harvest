@@ -78,49 +78,107 @@ class DedupStore:
         return hashlib.md5(prompt[:500].encode("utf-8", errors="ignore")).hexdigest()[:16]
 
     @classmethod
+    def _force_reset(cls) -> None:
+        """Backup the corrupt DB and clear the cached connection so the next
+        _connection() call rebuilds from scratch. Caller must hold cls._lock."""
+        if cls._conn is not None:
+            try:
+                cls._conn.close()
+            except Exception:
+                pass
+            cls._conn = None
+        try:
+            if DB_PATH.exists():
+                backup = DB_PATH.with_suffix(f".corrupt-{int(time.time())}.bak")
+                DB_PATH.rename(backup)
+            for ext in ("-wal", "-shm"):
+                p = Path(str(DB_PATH) + ext)
+                if p.exists():
+                    p.unlink()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _is_corruption(e: Exception) -> bool:
+        msg = str(e).lower()
+        return "malformed" in msg or "corrupt" in msg or "not a database" in msg
+
+    @classmethod
     def is_new(cls, prompt: str, source: str = "unknown") -> bool:
         """Atomic check-and-insert. Returns True if hash newly added (writer should
-        emit the pair); False if already seen (writer should skip)."""
+        emit the pair); False if already seen (writer should skip).
+        Resilient against runtime corruption: resets DB once and retries."""
         if not prompt:
             return False
         h = cls.hash_key(prompt)
-        with cls._lock:
-            con = cls._connection()
-            cur = con.execute(
-                "INSERT OR IGNORE INTO seen_hashes (hash, source, ts) VALUES (?, ?, ?)",
-                (h, source, int(time.time())),
-            )
-            con.commit()
-            return cur.rowcount > 0
+        for attempt in range(2):
+            try:
+                with cls._lock:
+                    con = cls._connection()
+                    cur = con.execute(
+                        "INSERT OR IGNORE INTO seen_hashes (hash, source, ts) VALUES (?, ?, ?)",
+                        (h, source, int(time.time())),
+                    )
+                    con.commit()
+                    return cur.rowcount > 0
+            except sqlite3.DatabaseError as e:
+                if cls._is_corruption(e) and attempt == 0:
+                    with cls._lock:
+                        cls._force_reset()
+                    continue
+                raise
+        return False
 
     @classmethod
     def bulk_seen(cls, prompts: Iterable[str], source: str = "bootstrap") -> int:
-        """Mark a batch of prompts as seen (used to bootstrap from existing data).
-        Returns count newly added."""
+        """Mark a batch of prompts as seen. Returns count newly added.
+        Resilient against runtime corruption: resets DB once and retries."""
         rows = [(cls.hash_key(p), source, int(time.time())) for p in prompts if p]
         if not rows:
             return 0
-        with cls._lock:
-            con = cls._connection()
-            before = con.execute("SELECT COUNT(*) FROM seen_hashes").fetchone()[0]
-            con.executemany(
-                "INSERT OR IGNORE INTO seen_hashes (hash, source, ts) VALUES (?, ?, ?)",
-                rows,
-            )
-            con.commit()
-            after = con.execute("SELECT COUNT(*) FROM seen_hashes").fetchone()[0]
-            return after - before
+        for attempt in range(2):
+            try:
+                with cls._lock:
+                    con = cls._connection()
+                    before = con.execute("SELECT COUNT(*) FROM seen_hashes").fetchone()[0]
+                    con.executemany(
+                        "INSERT OR IGNORE INTO seen_hashes (hash, source, ts) VALUES (?, ?, ?)",
+                        rows,
+                    )
+                    con.commit()
+                    after = con.execute("SELECT COUNT(*) FROM seen_hashes").fetchone()[0]
+                    return after - before
+            except sqlite3.DatabaseError as e:
+                if cls._is_corruption(e) and attempt == 0:
+                    with cls._lock:
+                        cls._force_reset()
+                    continue
+                raise
+        return 0
 
     @classmethod
     def stats(cls) -> dict:
-        with cls._lock:
-            con = cls._connection()
-            total = con.execute("SELECT COUNT(*) FROM seen_hashes").fetchone()[0]
-            by_source = dict(con.execute(
-                "SELECT source, COUNT(*) FROM seen_hashes GROUP BY source ORDER BY 2 DESC LIMIT 20"
-            ).fetchall())
-            mn, mx = con.execute("SELECT MIN(ts), MAX(ts) FROM seen_hashes").fetchone()
-        return {"total": total, "by_source": by_source, "first_ts": mn, "latest_ts": mx}
+        """Return DB stats. Safe against corruption — resets and returns empty
+        stats rather than crashing the caller (callers like dataset-enrich
+        treat stats as diagnostic, not load-bearing)."""
+        for attempt in range(2):
+            try:
+                with cls._lock:
+                    con = cls._connection()
+                    total = con.execute("SELECT COUNT(*) FROM seen_hashes").fetchone()[0]
+                    by_source = dict(con.execute(
+                        "SELECT source, COUNT(*) FROM seen_hashes GROUP BY source ORDER BY 2 DESC LIMIT 20"
+                    ).fetchall())
+                    mn, mx = con.execute("SELECT MIN(ts), MAX(ts) FROM seen_hashes").fetchone()
+                return {"total": total, "by_source": by_source, "first_ts": mn, "latest_ts": mx}
+            except sqlite3.DatabaseError as e:
+                if cls._is_corruption(e) and attempt == 0:
+                    with cls._lock:
+                        cls._force_reset()
+                    continue
+                # Last-resort: never let stats() crash a caller
+                return {"total": 0, "by_source": {}, "first_ts": None, "latest_ts": None, "error": str(e)}
+        return {"total": 0, "by_source": {}, "first_ts": None, "latest_ts": None}
 
 
 def write_pair_dedup(record: dict, output_path: Path | str, prompt: str | None = None) -> bool:

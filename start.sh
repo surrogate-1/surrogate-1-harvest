@@ -61,6 +61,20 @@ if [[ -d "$DATA" ]] && [[ -w "$DATA" ]]; then
         echo "[$(date +%H:%M:%S)] one-time offset reset → $CUR (skip placeholder backlog)" >> "$LOG_DIR/boot.log"
     fi
 
+    # ── Boot-time dedup.db corruption check ──────────────────────────────
+    # 16 parallel shards previously corrupted the SQLite WAL. If the DB is
+    # unreadable on boot, back it up and force re-bootstrap from scratch.
+    DEDUP_DB="${HOME}/.surrogate/state/dedup.db"
+    if [[ -f "$DEDUP_DB" ]]; then
+        if ! sqlite3 "$DEDUP_DB" "SELECT 1 FROM seen_hashes LIMIT 1" >/dev/null 2>&1; then
+            TS=$(date +%s)
+            mv "$DEDUP_DB" "${DEDUP_DB}.corrupt-${TS}.bak" 2>/dev/null
+            rm -f "${DEDUP_DB}-wal" "${DEDUP_DB}-shm"
+            rm -f "${HOME}/.surrogate/.dedup-bootstrap-done"
+            echo "[$(date +%H:%M:%S)] WIPED corrupt dedup.db → ${DEDUP_DB}.corrupt-${TS}.bak (forcing re-bootstrap)" >> "$LOG_DIR/boot.log"
+        fi
+    fi
+
     # ── One-time central dedup bootstrap from existing data ──────────────
     if [[ ! -f "${HOME}/.surrogate/.dedup-bootstrap-done" ]]; then
         echo "[$(date +%H:%M:%S)] running central dedup bootstrap (one-time)" >> "$LOG_DIR/boot.log"

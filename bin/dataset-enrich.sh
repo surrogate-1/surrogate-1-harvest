@@ -352,7 +352,14 @@ import sys as _sys
 _sys.path.insert(0, str(Path.home() / ".surrogate/bin/lib"))
 from dedup import DedupStore
 
-print(f"Central dedup store: {DedupStore.stats()['total']:,} hashes already known", flush=True)
+try:
+    _stats = DedupStore.stats()
+    if _stats.get("error"):
+        print(f"  ⚠ dedup stats degraded: {_stats['error']}; ingestion proceeds with auto-recovery", flush=True)
+    else:
+        print(f"Central dedup store: {_stats['total']:,} hashes already known", flush=True)
+except Exception as _e:
+    print(f"  ⚠ dedup stats unavailable ({_e}); ingestion proceeds anyway", flush=True)
 existing_hashes = set()  # legacy local cache, kept for back-compat — central is canonical
 print("Loading legacy axentx pairs for dedup (one-time bootstrap)...", flush=True)
 for path in [Path.home() / 'axentx/surrogate/data/training-jsonl',
