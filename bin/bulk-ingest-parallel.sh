@@ -10,8 +10,8 @@ set -a; source "$HOME/.hermes/.env" 2>/dev/null; set +a
 LOG="$HOME/.surrogate/logs/bulk-ingest-parallel.log"
 mkdir -p "$(dirname "$LOG")"
 
-NUM_SHARDS="${INGEST_SHARDS:-8}"
-SHARD_COOLDOWN="${SHARD_COOLDOWN:-180}"  # 3 min between shard cycles (was 5)
+NUM_SHARDS="${INGEST_SHARDS:-16}"
+SHARD_COOLDOWN="${SHARD_COOLDOWN:-120}"  # 2 min between shard cycles (was 3)
 
 echo "[$(date +%H:%M:%S)] bulk-ingest-parallel start (shards=$NUM_SHARDS)" | tee -a "$LOG"
 
