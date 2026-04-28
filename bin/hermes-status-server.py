@@ -102,10 +102,23 @@ def _agentic_visited() -> int:
 
 
 def _ollama_models() -> list[str]:
+    """Quick (non-blocking) check of loaded Ollama models. Caches for 30s."""
+    cache = HOME / ".surrogate/state/.ollama-models-cache.json"
     try:
-        import urllib.request, json as _json
-        with urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=2) as r:
-            return [m["name"] for m in _json.load(r).get("models", [])]
+        import json as _json, time
+        if cache.exists():
+            cached = _json.loads(cache.read_text())
+            if time.time() - cached.get("ts", 0) < 30:
+                return cached.get("models", [])
+    except Exception:
+        pass
+    try:
+        import urllib.request, json as _json, time
+        with urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=1.5) as r:
+            models = [m["name"] for m in _json.load(r).get("models", [])]
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(_json.dumps({"ts": time.time(), "models": models}))
+        return models
     except Exception:
         return []
 
@@ -136,10 +149,14 @@ def health() -> dict:
 def log_tail(name: str, lines: int = 100) -> PlainTextResponse:
     """Tail a specific log file. Allowlist for security."""
     allowed = {
-        "boot", "cron", "scrape-continuous", "scrape-daemon",
-        "agentic-crawler", "skill-synthesis", "auto-orchestrate-loop",
-        "training-push", "ollama", "discord-bot", "surrogate-research-loop",
-        "domain-scrape", "qwen-coder", "git-clone", "git-pull",
+        "boot", "cron", "cron-master", "scrape-continuous", "scrape-daemon",
+        "scrape-keyword-tuner", "agentic-crawler", "skill-synthesis",
+        "auto-orchestrate-loop", "training-push", "ollama", "discord-bot",
+        "hermes-discord-bot", "surrogate-research-loop", "surrogate-research-apply",
+        "surrogate-dev-loop", "domain-scrape-loop", "github-domain-scrape",
+        "qwen-coder", "git-clone", "git-pull", "redis",
+        "ollama-pull-coder", "ollama-pull-devstral", "ollama-pull-fallback",
+        "ollama-pull-yicoder", "ollama-pull-embed", "ollama-pull-light",
     }
     if name not in allowed:
         raise HTTPException(404, f"Unknown log: {name}. Allowed: {sorted(allowed)}")

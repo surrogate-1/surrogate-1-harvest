@@ -10,8 +10,18 @@ DUR="${1:-900}"
 PARALLEL="${2:-3}"
 LOG="$HOME/.surrogate/logs/domain-scrape-loop.log"
 START=$(date +%s)
-BEFORE_PAIRS=$(wc -l ~/axentx/surrogate/data/training-jsonl/*.jsonl 2>/dev/null | tail -1 | awk '{print $1}')
-BEFORE_LEDGER=$(sqlite3 ~/.surrogate/state/scrape-ledger.db "SELECT COUNT(*) FROM scraped" 2>/dev/null)
+
+# Initialize ledger if missing (creates the 'scraped' table)
+LEDGER_DB="$HOME/.surrogate/state/scrape-ledger.db"
+if [[ ! -f "$LEDGER_DB" ]] || ! sqlite3 "$LEDGER_DB" "SELECT 1 FROM scraped LIMIT 1" >/dev/null 2>&1; then
+    bash "$HOME/.surrogate/bin/scrape-ledger-init.sh" 2>>"$LOG"
+fi
+
+# Default 0 if query fails (was causing empty arithmetic in iter logs)
+BEFORE_PAIRS=$(wc -l "$HOME/.surrogate/training-pairs.jsonl" 2>/dev/null | awk '{print $1}')
+BEFORE_PAIRS=${BEFORE_PAIRS:-0}
+BEFORE_LEDGER=$(sqlite3 "$LEDGER_DB" "SELECT COUNT(*) FROM scraped" 2>/dev/null)
+BEFORE_LEDGER=${BEFORE_LEDGER:-0}
 
 echo "═══ LOOP START $(date +%H:%M:%S) duration=${DUR}s parallel=$PARALLEL" | tee -a "$LOG"
 echo "   before: pairs=$BEFORE_PAIRS ledger_repos=$BEFORE_LEDGER" | tee -a "$LOG"
@@ -22,8 +32,9 @@ while true; do
     [[ $((NOW - START)) -gt $DUR ]] && break
     ITER=$((ITER + 1))
 
-    # Health check — break if load > 10
-    LOAD=$(uptime | awk -F'load averages:' '{print $2}' | awk '{print int($1)}')
+    # Health check — break if load > 10 (Linux: "load average:", macOS: "load averages:")
+    LOAD=$(uptime | sed -E 's/.*load average[s]?:[[:space:]]*//' | awk -F',' '{print int($1)}')
+    LOAD=${LOAD:-0}
     if [[ $LOAD -gt 10 ]]; then
         echo "  [iter=$ITER] load=$LOAD pause 30s" | tee -a "$LOG"
         sleep 30
@@ -43,14 +54,18 @@ while true; do
 
     # Progress every 5 iters
     if (( ITER % 5 == 0 )); then
-        PAIRS=$(wc -l ~/axentx/surrogate/data/training-jsonl/*.jsonl 2>/dev/null | tail -1 | awk '{print $1}')
-        LEDGER=$(sqlite3 ~/.surrogate/state/scrape-ledger.db "SELECT COUNT(*) FROM scraped" 2>/dev/null)
+        PAIRS=$(wc -l "$HOME/.surrogate/training-pairs.jsonl" 2>/dev/null | awk '{print $1}')
+        PAIRS=${PAIRS:-0}
+        LEDGER=$(sqlite3 "$LEDGER_DB" "SELECT COUNT(*) FROM scraped" 2>/dev/null)
+        LEDGER=${LEDGER:-0}
         echo "  [iter=$ITER $((NOW - START))s] pairs=$PAIRS (+$((PAIRS - BEFORE_PAIRS))) ledger=$LEDGER (+$((LEDGER - BEFORE_LEDGER)))" | tee -a "$LOG"
     fi
 done
 
-AFTER_PAIRS=$(wc -l ~/axentx/surrogate/data/training-jsonl/*.jsonl 2>/dev/null | tail -1 | awk '{print $1}')
-AFTER_LEDGER=$(sqlite3 ~/.surrogate/state/scrape-ledger.db "SELECT COUNT(*) FROM scraped" 2>/dev/null)
+AFTER_PAIRS=$(wc -l "$HOME/.surrogate/training-pairs.jsonl" 2>/dev/null | awk '{print $1}')
+AFTER_PAIRS=${AFTER_PAIRS:-0}
+AFTER_LEDGER=$(sqlite3 "$LEDGER_DB" "SELECT COUNT(*) FROM scraped" 2>/dev/null)
+AFTER_LEDGER=${AFTER_LEDGER:-0}
 echo "═══ LOOP DONE $(date +%H:%M:%S)" | tee -a "$LOG"
 echo "   iters: $ITER" | tee -a "$LOG"
 echo "   pairs added:  $((AFTER_PAIRS - BEFORE_PAIRS))" | tee -a "$LOG"

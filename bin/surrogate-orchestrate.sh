@@ -531,8 +531,8 @@ if echo "$VERDICT_TEXT" | grep -qi "APPROVE"; then
     echo "${GR}${B}▸ Reviewer approved — committing changes${R}"
     if ! git -C "$(pwd)" diff --quiet 2>/dev/null || ! git -C "$(pwd)" diff --cached --quiet 2>/dev/null; then
         git -C "$(pwd)" add -A 2>/dev/null
-        local short_task; short_task=$(echo "$TASK" | head -c 72)
-        if git -C "$(pwd)" commit -m "feat: $short_task
+        SHORT_TASK=$(echo "$TASK" | head -c 72)
+        if git -C "$(pwd)" commit -m "feat: $SHORT_TASK
 
 [surrogate auto-dev session $SESSION_ID]
 [reviewed: APPROVE]" 2>&1 | tee -a "$WORKDIR/git-commit.log" | grep -q "master\|main\|\["; then
