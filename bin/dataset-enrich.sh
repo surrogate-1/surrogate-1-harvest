@@ -71,6 +71,22 @@ DATASETS = [
     ("TuringEnterprises/CRAVE",                     "MIT",         "crave-pr-review",     "pr-review",              1200),
     # ── Single-statement bug fixes (real-world Java) ────────────────────────
     ("zirui3/ManySStuBs4J-instructions-v0",         "CC-BY-4.0",   "manysstubs-bugfix",   "instr-resp",            50000),
+    # ── DevSecOps upgrade: cleaner vuln+fix paired data ──────────────────────
+    ("DetectVul/CVEFixes",                          "Apache",      "cvefixes",            "code-defect-cwe",       12987),
+    ("starsofchance/PrimeVul",                      "MIT",         "primevul",            "code-defect-cwe",      100000),
+    ("arag0rn/SecVulEval",                          "MIT",         "secvuleval",          "code-defect-cwe",       25440),
+    # ── Code review depth (commitpackft already there; add JetBrains) ────────
+    ("JetBrains-Research/commit-chronicle",         "Apache",      "commit-chronicle",    "commit",               100000),
+    ("microsoft/codereviewer",                      "MIT",         "ms-codereviewer",     "pr-review",             80000),
+    # ── Algorithmic / competitive coding ─────────────────────────────────────
+    ("codeparrot/apps",                             "MIT",         "apps-algo",           "instr-resp",            10000),
+    ("deepmind/code_contests",                      "CC-BY-4.0",   "code-contests",       "code-contests",          4000),
+    # ── API design (was zero coverage) ───────────────────────────────────────
+    ("APIs-guru/openapi-directory",                 "CC0",         "apis-guru",           "openapi-spec",           3800),
+    # ── Multilingual instruction (incl. Thai — replaces NC sets) ─────────────
+    ("CohereForAI/aya_dataset",                     "Apache",      "aya-multi",           "instr-resp",           150000),
+    # ── Code corpus (legal alternative to the-stack) ─────────────────────────
+    ("iidai/codenet",                               "CDLA",        "ibm-codenet",         "code-only",            200000),
 ]
 
 # 1. Existing axentx hashes for dedup
@@ -182,12 +198,36 @@ with open(out_path, "w") as out:
                     if not issue or not patch: continue
                     prompt = f"Repo: {repo}\n\nIssue:\n{issue}\n\nGenerate a patch (unified diff) that resolves this issue."
                     response = patch
-                elif schema == "pr-review":               # CRAVE
-                    diff = str(row.get("diff",""))[:6000]
-                    label = row.get("label", "")
-                    reasoning = str(row.get("reasoning") or row.get("explanation",""))[:3000]
+                elif schema == "pr-review":               # CRAVE / microsoft codereviewer
+                    diff = str(row.get("diff") or row.get("patch") or row.get("oldf",""))[:6000]
+                    label = row.get("label") or row.get("y") or row.get("verdict","")
+                    reasoning = str(row.get("reasoning") or row.get("explanation") or row.get("msg") or row.get("comment",""))[:3000]
+                    if not diff: continue
                     prompt = f"Review this PR diff:\n```diff\n{diff}\n```\nClassify (approve/request-changes/reject) and explain."
                     response = f"Verdict: {label}\n\nReasoning: {reasoning}"
+                elif schema == "code-contests":           # DeepMind CodeContests
+                    desc = str(row.get("description",""))[:4000]
+                    sols = row.get("solutions") or {}
+                    sol_list = sols.get("solution", []) if isinstance(sols, dict) else []
+                    if not desc or not sol_list: continue
+                    prompt = f"Solve this competitive programming problem:\n\n{desc}\n\nProvide a working solution."
+                    response = str(sol_list[0])[:8000]
+                elif schema == "openapi-spec":            # APIs.guru
+                    info = row.get("info", {}) if isinstance(row.get("info"), dict) else {}
+                    title = str(info.get("title","Unknown"))
+                    desc = str(info.get("description",""))[:1000]
+                    paths = list((row.get("paths") or {}).keys())[:30]
+                    if not paths: continue
+                    prompt = f"Design a REST API for: {title}\n{desc}"
+                    response = f"Endpoints:\n" + "\n".join(f"  {p}" for p in paths)
+                elif schema == "code-only":               # IBM CodeNet (synthetic prompt)
+                    code = str(row.get("code") or row.get("content") or row.get("solution",""))[:6000]
+                    lang = str(row.get("language", "code"))
+                    if len(code) < 80: continue
+                    prompt = f"Explain what this {lang} code does:\n```{lang}\n{code}\n```"
+                    response = f"[Code sample from IBM CodeNet — pending LLM-generated explanation]"
+                    # Skip writing — placeholder responses pollute training data
+                    continue
                 else:
                     continue
 

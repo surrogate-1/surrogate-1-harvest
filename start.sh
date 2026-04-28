@@ -172,8 +172,11 @@ sleep 6
         echo "[$(date +%H:%M:%S)] pulling qwen3-coder:30b-a3b (~16 GB MoE, primary brain)" >> "$LOG_DIR/boot.log"
         ollama pull qwen3-coder:30b-a3b-instruct-q4_K_M > "$LOG_DIR/ollama-pull-coder.log" 2>&1
     fi
-    # Skip devstral + yi-coder for now — over budget on free 16GB instance.
-    # Re-enable after upgrade to HF Pro tier (32GB+).
+    if ! ollama list 2>/dev/null | grep -q "granite-code"; then
+        echo "[$(date +%H:%M:%S)] pulling granite-code:8b (~5 GB, IBM 128k ctx Apache)" >> "$LOG_DIR/boot.log"
+        ollama pull granite-code:8b-instruct > "$LOG_DIR/ollama-pull-granite.log" 2>&1
+    fi
+    # Skip devstral + yi-coder + qwen2.5-coder-32b for now — over 16GB CPU budget.
     echo "[$(date +%H:%M:%S)] all model pulls done (serial, no CPU storm)" >> "$LOG_DIR/boot.log"
 ) &
 
@@ -248,6 +251,10 @@ while true; do
     [[ $((M % 15)) -eq 0 ]] && bash ~/.surrogate/bin/surrogate-self-ingest.sh >> "$LOG" 2>&1 &
     # Every 30 min: synthetic data generation (REWORK→APPROVE DPO + distilabel rewrite)
     [[ $((M % 30)) -eq 7 ]] && bash ~/.surrogate/bin/synthetic-data-from-rework.sh >> "$LOG" 2>&1 &
+    # Daily 04:00 UTC: refresh CVE feed (NVD + CISA KEV) → security-knowledge dataset
+    [[ $((M % 1440)) -eq 240 ]] && bash ~/.surrogate/bin/refresh-cve-feed.sh >> "$LOG" 2>&1 &
+    # Daily 05:00 UTC: scrape SRE postmortems (danluu list + awesome-tech-postmortems)
+    [[ $((M % 1440)) -eq 300 ]] && bash ~/.surrogate/bin/scrape-sre-postmortems.sh >> "$LOG" 2>&1 &
     sleep 60
 done
 CRONSH
