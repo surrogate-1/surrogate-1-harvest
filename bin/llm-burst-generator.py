@@ -90,6 +90,29 @@ PROVIDERS = [
         "model": "moonshot-v1-32k",                   # kimi-k2 was wrong
         "rpm_budget": 15,
     },
+    # HF Inference API — free hosted Llama / Mistral / Mixtral / etc.
+    # User: 'HF local model ก็มี ทำไมเธอไม่เอามาใช้'.
+    {
+        "name": "hf-llama-3.3",
+        "url": "https://api-inference.huggingface.co/v1/chat/completions",
+        "key_env": "HF_TOKEN",
+        "model": "meta-llama/Llama-3.3-70B-Instruct",
+        "rpm_budget": 10,
+    },
+    {
+        "name": "hf-qwen-coder",
+        "url": "https://api-inference.huggingface.co/v1/chat/completions",
+        "key_env": "HF_TOKEN",
+        "model": "Qwen/Qwen2.5-Coder-32B-Instruct",
+        "rpm_budget": 10,
+    },
+    {
+        "name": "hf-mistral",
+        "url": "https://api-inference.huggingface.co/v1/chat/completions",
+        "key_env": "HF_TOKEN",
+        "model": "mistralai/Mistral-Small-24B-Instruct-2501",
+        "rpm_budget": 10,
+    },
 ]
 
 # ── Prompt templates ────────────────────────────────────────────────────────
