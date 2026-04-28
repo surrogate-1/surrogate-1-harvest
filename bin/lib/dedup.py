@@ -103,15 +103,25 @@ class DedupStore:
         msg = str(e).lower()
         return "malformed" in msg or "corrupt" in msg or "not a database" in msg
 
+    @staticmethod
+    def _is_transient(e: Exception) -> bool:
+        """Disk I/O contention or lock pile-up under 16 parallel writers.
+        Caller should backoff + retry, NOT wipe the DB."""
+        msg = str(e).lower()
+        return ("disk i/o error" in msg or "database is locked" in msg
+                or "cannot start a transaction" in msg)
+
     @classmethod
     def is_new(cls, prompt: str, source: str = "unknown") -> bool:
         """Atomic check-and-insert. Returns True if hash newly added (writer should
         emit the pair); False if already seen (writer should skip).
-        Resilient against runtime corruption: resets DB once and retries."""
+        Resilient against:
+          - hard corruption -> reset DB once, retry
+          - transient I/O / lock contention -> backoff + retry up to 3x"""
         if not prompt:
             return False
         h = cls.hash_key(prompt)
-        for attempt in range(2):
+        for attempt in range(4):
             try:
                 with cls._lock:
                     con = cls._connection()
@@ -126,17 +136,21 @@ class DedupStore:
                     with cls._lock:
                         cls._force_reset()
                     continue
-                raise
-        return False
+                if cls._is_transient(e) and attempt < 3:
+                    time.sleep(0.4 * (2 ** attempt))  # 0.4s, 0.8s, 1.6s backoff
+                    continue
+                # Last resort: don't crash the caller — best to skip than lose
+                # the whole batch over a single retry-exhaustion.
+                return True  # treat as new; worst case is one duplicate
 
     @classmethod
     def bulk_seen(cls, prompts: Iterable[str], source: str = "bootstrap") -> int:
         """Mark a batch of prompts as seen. Returns count newly added.
-        Resilient against runtime corruption: resets DB once and retries."""
+        Same resilience model as is_new()."""
         rows = [(cls.hash_key(p), source, int(time.time())) for p in prompts if p]
         if not rows:
             return 0
-        for attempt in range(2):
+        for attempt in range(4):
             try:
                 with cls._lock:
                     con = cls._connection()
@@ -153,8 +167,10 @@ class DedupStore:
                     with cls._lock:
                         cls._force_reset()
                     continue
-                raise
-        return 0
+                if cls._is_transient(e) and attempt < 3:
+                    time.sleep(0.4 * (2 ** attempt))
+                    continue
+                return 0
 
     @classmethod
     def stats(cls) -> dict:
@@ -175,6 +191,9 @@ class DedupStore:
                 if cls._is_corruption(e) and attempt == 0:
                     with cls._lock:
                         cls._force_reset()
+                    continue
+                if cls._is_transient(e) and attempt < 1:
+                    time.sleep(0.5)
                     continue
                 # Last-resort: never let stats() crash a caller
                 return {"total": 0, "by_source": {}, "first_ts": None, "latest_ts": None, "error": str(e)}

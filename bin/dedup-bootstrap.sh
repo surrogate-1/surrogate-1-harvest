@@ -8,7 +8,17 @@ LOG="$HOME/.surrogate/logs/dedup-bootstrap.log"
 mkdir -p "$(dirname "$LOG")"
 DEDUP_DB="$HOME/.surrogate/state/dedup.db"
 
-echo "[$(date +%H:%M:%S)] dedup bootstrap start" | tee -a "$LOG"
+# Single-instance guard — prevents two start.sh runs (e.g., container restarts)
+# from kicking off concurrent bootstraps that fight over dedup.db locks.
+LOCK="$HOME/.surrogate/state/dedup-bootstrap.lock"
+mkdir -p "$(dirname "$LOCK")"
+exec 200>"$LOCK"
+if ! flock -n 200; then
+    echo "[$(date +%H:%M:%S)] another bootstrap already running — exiting" | tee -a "$LOG"
+    exit 0
+fi
+
+echo "[$(date +%H:%M:%S)] dedup bootstrap start (locked)" | tee -a "$LOG"
 
 # 1. Bootstrap from local training-pairs.jsonl
 if [[ -f "$HOME/.surrogate/training-pairs.jsonl" ]]; then
