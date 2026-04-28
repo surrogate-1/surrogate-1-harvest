@@ -116,3 +116,4 @@ PYEOF
 echo "[$(date +%H:%M:%S)] submitting to Lightning H200 (4hr free quota)" | tee -a "$LOG"
 lightning run app "$TRAIN_SCRIPT" --machine H200 --name "surrogate-1-$(date -u +%Y%m%d-%H%M)" 2>&1 | tee -a "$LOG"
 echo "[$(date +%H:%M:%S)] lightning-trainer cycle done" | tee -a "$LOG"
+# trigger: pickup LIGHTNING_USER_ID + LIGHTNING_API_KEY 2026-04-28T20:29:29Z
