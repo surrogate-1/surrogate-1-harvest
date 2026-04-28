@@ -10,8 +10,12 @@ set -a; source "$HOME/.hermes/.env" 2>/dev/null; set +a
 LOG="$HOME/.surrogate/logs/bulk-ingest-parallel.log"
 mkdir -p "$(dirname "$LOG")"
 
-NUM_SHARDS="${INGEST_SHARDS:-16}"
-SHARD_COOLDOWN="${SHARD_COOLDOWN:-120}"  # 2 min between shard cycles (was 3)
+NUM_SHARDS="${INGEST_SHARDS:-6}"           # was 16 — caused Memory limit exceeded (16Gi)
+                                            # on cpu-basic. Each shard streams
+                                            # ~1 GB peak via 'datasets' lib.
+                                            # 6 shards x ~1 GB + 30 daemons +
+                                            # Python heap fits comfortably under 16 GB.
+SHARD_COOLDOWN="${SHARD_COOLDOWN:-120}"     # 2 min between shard cycles
 
 echo "[$(date +%H:%M:%S)] bulk-ingest-parallel start (shards=$NUM_SHARDS)" | tee -a "$LOG"
 
@@ -28,9 +32,11 @@ shard_loop() {
     done
 }
 
-# Stagger startup 15s apart (was 30s) to spin up faster
+# Stagger startup 30s apart so memory ramps up gradually — if the OOM killer
+# is going to fire, give earlier shards a chance to settle into steady-state
+# before all peers are loading datasets in parallel.
 for i in $(seq 0 $((NUM_SHARDS - 1))); do
     shard_loop "$i" "$NUM_SHARDS" &
-    sleep 15
+    sleep 30
 done
 wait
