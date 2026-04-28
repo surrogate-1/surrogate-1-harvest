@@ -193,6 +193,21 @@ def logs_list() -> dict:
     return {"logs": sorted(p.stem for p in LOG_DIR.glob("*.log"))}
 
 
+@app.get("/dynamic-datasets")
+def dynamic_datasets():
+    """Expose the discoverer's running list of auto-found datasets so
+    external runners (GitHub Actions, Oracle Free Tier, etc.) can sync it
+    and ingest the same expanding catalog without each having to re-run
+    the discoverer themselves."""
+    p = HOME / ".surrogate/state/dynamic-datasets.json"
+    if not p.exists():
+        return JSONResponse({"datasets": [], "note": "dynamic-datasets.json not yet built"}, status_code=200)
+    try:
+        return PlainTextResponse(p.read_text(), media_type="application/json")
+    except Exception as e:
+        raise HTTPException(500, f"read failed: {e}")
+
+
 class ChatRequest(BaseModel):
     prompt: str
     cwd: str | None = None
