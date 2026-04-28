@@ -65,17 +65,51 @@ Then write a 1-line action TODO to ${RESEARCH_DIR}/queue.txt for each quick-win,
 
 Be selective — quality > quantity."
 
-# ── Run research via surrogate CLI ──────────────────────────────────────────
+# ── Run research via cloud LLM API directly ────────────────────────────────
+# Original $HOME/.local/bin/surrogate CLI was never installed on this Space,
+# so every cycle was failing silently in 0s. Replaced with direct calls to
+# whichever cloud LLM key is set (Cerebras → Groq → OpenRouter) with
+# automatic fallback if a backend is rate-limited or unavailable.
 START=$(date +%s)
-"$HOME/.local/bin/surrogate" -p --max-steps 8 "$PROMPT" 2>&1 | head -100 >> "$LOG"
+RESEARCH_RESPONSE=""
+for backend in cerebras groq openrouter; do
+    case "$backend" in
+        cerebras)   url="https://api.cerebras.ai/v1/chat/completions";    key="${CEREBRAS_API_KEY:-}";   model="qwen-3-coder-480b" ;;
+        groq)       url="https://api.groq.com/openai/v1/chat/completions"; key="${GROQ_API_KEY:-}";       model="qwen/qwen3-32b" ;;
+        openrouter) url="https://openrouter.ai/api/v1/chat/completions";   key="${OPENROUTER_API_KEY:-}"; model="qwen/qwen3-coder:free" ;;
+    esac
+    [[ -z "$key" ]] && { echo "  [$backend] no key — skip" >> "$LOG"; continue; }
+    RESEARCH_RESPONSE=$(curl -sS --max-time 90 "$url" \
+        -H "Authorization: Bearer $key" \
+        -H "Content-Type: application/json" \
+        -d "$(python3 -c "import json,sys; print(json.dumps({'model':sys.argv[1],'messages':[{'role':'user','content':sys.argv[2]}],'max_tokens':4000,'temperature':0.4}))" "$model" "$PROMPT")" 2>>"$LOG" \
+        | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('choices',[{}])[0].get('message',{}).get('content',''))" 2>>"$LOG" || true)
+    if [[ -n "$RESEARCH_RESPONSE" ]]; then
+        echo "  [$backend] response: $(echo "$RESEARCH_RESPONSE" | wc -c) chars" >> "$LOG"
+        break
+    fi
+    echo "  [$backend] empty/error — try next" >> "$LOG"
+done
+
+if [[ -n "$RESEARCH_RESPONSE" ]]; then
+    {
+        echo "# Research cycle: $FOCUS ($CYCLE_TS)"
+        echo ""
+        echo "$RESEARCH_RESPONSE"
+    } > "$OUT"
+    # Extract any 'apply ...' lines into the queue
+    echo "$RESEARCH_RESPONSE" | grep -E "^apply " >> "$RESEARCH_DIR/queue.txt" 2>/dev/null || true
+fi
+
 DUR=$(( $(date +%s) - START ))
 echo "[$(date +%H:%M:%S)] research done in ${DUR}s" | tee -a "$LOG"
 
 # ── Discord notify if new findings worth attention ─────────────────────────
 if [[ -f "$OUT" ]] && [[ -s "$OUT" ]]; then
     QUICK_WINS=$(grep -c "^apply " "$RESEARCH_DIR/queue.txt" 2>/dev/null || echo 0)
-    "$HOME/.local/bin/notify-discord.sh" 2>/dev/null info "🔬 Research cycle done" \
-        "Focus: $FOCUS · ${DUR}s · $(wc -l < "$OUT") lines · $QUICK_WINS quick-wins queued" || true
+    [[ -x "$HOME/.local/bin/notify-discord.sh" ]] && \
+        "$HOME/.local/bin/notify-discord.sh" info "🔬 Research cycle done" \
+        "Focus: $FOCUS · ${DUR}s · $(wc -l < "$OUT") lines · $QUICK_WINS quick-wins queued" 2>/dev/null || true
 fi
 
 echo "[$(date +%H:%M:%S)] cycle done" | tee -a "$LOG"

@@ -42,7 +42,16 @@ TAKE=$NEW
 [[ $TAKE -gt $BATCH_SIZE ]] && TAKE=$BATCH_SIZE
 echo "[$(date +%H:%M:%S)]   processing $TAKE / $NEW (batch_size=$BATCH_SIZE)" | tee -a "$LOG"
 
-sed -n "$((PREV + 1)),$((PREV + TAKE))p" "$SRC" | python3 - "$INDEX" >> "$LOG" 2>&1 <<'PYEOF'
+# Bug fix: previously `sed | python3 - "$INDEX" <<'PYEOF'` had a redirection
+# conflict — bash's heredoc binds to python3's stdin AFTER the pipe, so the
+# script body (PYEOF block) was being read as stdin (and consumed once for
+# 'python3 -'), leaving sed's actual jsonl output unreachable. Result was
+# `inserted=0 skipped_parse=0 skipped_empty=0` — a silent black hole.
+#
+# Fix: write the inline python to a temp file, then run with sed piped in.
+# Now stdin = the actual jsonl lines, exactly as intended.
+INGEST_PY=$(mktemp -t self-ingest-XXXXXX.py)
+cat > "$INGEST_PY" <<'PYEOF'
 import sys, json, sqlite3
 db = sys.argv[1]
 con = sqlite3.connect(db)
@@ -59,8 +68,6 @@ for line in sys.stdin:
     ts = d.get("ts", 0)
     prompt = (d.get("prompt") or "")[:4000]
     response = (d.get("response") or "")[:8000]
-    # Relaxed filter: index anything with both fields present (was 50-char min)
-    # Even short pairs are useful for tag-based retrieval
     if not prompt or not response:
         skipped_short += 1
         continue
@@ -75,6 +82,9 @@ for line in sys.stdin:
 con.commit()
 print(f"  inserted={n} skipped_parse={skipped_parse} skipped_empty={skipped_short}", flush=True)
 PYEOF
+
+sed -n "$((PREV + 1)),$((PREV + TAKE))p" "$SRC" | python3 "$INGEST_PY" "$INDEX" >> "$LOG" 2>&1
+rm -f "$INGEST_PY"
 
 # Advance offset by what we actually processed
 NEW_OFFSET=$(( PREV + TAKE ))
