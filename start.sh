@@ -255,16 +255,26 @@ echo "[$(date +%H:%M:%S)] hf-dataset-discoverer started (continuous mega-mix hun
 nohup bash ~/.surrogate/bin/auto-orchestrate-continuous.sh > "$LOG_DIR/auto-orchestrate-continuous.log" 2>&1 &
 echo "[$(date +%H:%M:%S)] auto-orchestrate-continuous started (4 parallel workers, never sleeps)" >> "$LOG_DIR/boot.log"
 
-# ── 7f. PARALLEL BULK INGEST (16 shards by slug-hash, drain 293M cap) ───────
+# ── 7e1. SELF-HEAL WATCHDOG — must start BEFORE memory-hungry workers ───────
+# Monitors RAM usage every 60s; preempts youngest dataset-enrich shard if
+# usage >= 85% to dodge the cpu-basic 16Gi OOM kill that would otherwise
+# crash the entire container. Also restarts stuck ingest / kicks stale uploader.
+nohup bash ~/.surrogate/bin/self-heal-watchdog.sh > "$LOG_DIR/self-heal-watchdog.log" 2>&1 &
+echo "[$(date +%H:%M:%S)] self-heal-watchdog started (mem<85%, ingest<20m, push<10m)" >> "$LOG_DIR/boot.log"
+
+# ── 7f. PARALLEL BULK INGEST (slug-hash sharded; 6 shards on cpu-basic) ─────
+# Was 16 shards but caused 'Memory limit exceeded (16Gi)' OOM. Each shard
+# peaks ~1 GB while streaming via 'datasets' lib. Watchdog above provides
+# a second safety net if peak still spikes.
 nohup bash ~/.surrogate/bin/bulk-ingest-parallel.sh > "$LOG_DIR/bulk-ingest-parallel.log" 2>&1 &
-echo "[$(date +%H:%M:%S)] bulk-ingest-parallel started (16 shards, 293M total cap)" >> "$LOG_DIR/boot.log"
+echo "[$(date +%H:%M:%S)] bulk-ingest-parallel started (6 shards, 293M total cap)" >> "$LOG_DIR/boot.log"
 
 # ── 7g. PARQUET-DIRECT INGEST (skip 'datasets' library overhead, 5-10× faster) ──
 # Downloads parquet shards directly via HF datasets-server API + pyarrow filter.
 # Targets only trillion-scale corpora where streaming is too slow.
-# 6 parallel downloads — coordinated with bulk-ingest via central dedup store.
-nohup bash ~/.surrogate/bin/parquet-direct-ingest.sh > "$LOG_DIR/parquet-direct-ingest.log" 2>&1 &
-echo "[$(date +%H:%M:%S)] parquet-direct-ingest started (6 parallel DLs)" >> "$LOG_DIR/boot.log"
+# DLs reduced to 2 parallel — combined with 6 ingest shards stays under 16Gi.
+PARQUET_PARALLEL=2 nohup bash ~/.surrogate/bin/parquet-direct-ingest.sh > "$LOG_DIR/parquet-direct-ingest.log" 2>&1 &
+echo "[$(date +%H:%M:%S)] parquet-direct-ingest started (2 parallel DLs)" >> "$LOG_DIR/boot.log"
 
 # ── 7c. Skill-synthesis daemon (extract patterns from cloned repos → skills) ─
 nohup bash ~/.surrogate/bin/skill-synthesis-daemon.sh > "$LOG_DIR/skill-synthesis.log" 2>&1 &

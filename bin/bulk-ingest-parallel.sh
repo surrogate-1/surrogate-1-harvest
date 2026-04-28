@@ -10,11 +10,15 @@ set -a; source "$HOME/.hermes/.env" 2>/dev/null; set +a
 LOG="$HOME/.surrogate/logs/bulk-ingest-parallel.log"
 mkdir -p "$(dirname "$LOG")"
 
-NUM_SHARDS="${INGEST_SHARDS:-6}"           # was 16 — caused Memory limit exceeded (16Gi)
-                                            # on cpu-basic. Each shard streams
-                                            # ~1 GB peak via 'datasets' lib.
-                                            # 6 shards x ~1 GB + 30 daemons +
-                                            # Python heap fits comfortably under 16 GB.
+NUM_SHARDS="${INGEST_SHARDS:-4}"           # was 16 -> 6 -> 4. cpu-basic 16Gi
+                                            # cap was breached even with 6
+                                            # shards because 'datasets' lib
+                                            # peaks ~1.5-2 GB during parquet
+                                            # decode under load. 4 shards +
+                                            # parquet-direct (2 DLs) + 30
+                                            # daemons fits comfortably with
+                                            # ~3 GB headroom for the watchdog
+                                            # to react before OOM.
 SHARD_COOLDOWN="${SHARD_COOLDOWN:-120}"     # 2 min between shard cycles
 
 echo "[$(date +%H:%M:%S)] bulk-ingest-parallel start (shards=$NUM_SHARDS)" | tee -a "$LOG"
