@@ -234,11 +234,15 @@ nohup bash ~/.surrogate/bin/github-agentic-crawler.sh > "$LOG_DIR/github-agentic
 echo "[$(date +%H:%M:%S)] github-agentic-crawler started (token pool maximized)" >> "$LOG_DIR/boot.log"
 
 # ── 7b3. HF Dataset Discoverer (continuous mega-mix hunt) ───────────────────
-# Searches HF Hub across 70+ topic queries every 30 min. Filters license + scores
-# quality. Auto-adds high-confidence permissive picks to dynamic-datasets.json.
-# dataset-enrich reads dynamic list on top of static 89 → infinitely growing corpus.
 nohup bash ~/.surrogate/bin/hf-dataset-discoverer.sh > "$LOG_DIR/hf-dataset-discoverer.log" 2>&1 &
 echo "[$(date +%H:%M:%S)] hf-dataset-discoverer started (continuous mega-mix hunt)" >> "$LOG_DIR/boot.log"
+
+# ── 7e. CONTINUOUS auto-orchestrate (4 parallel workers, no cron gap) ───────
+# Replaces M%20 cron — was 'fire once every 20 min'. Now: each of 4 workers
+# loops forever, dev work happens nonstop. Picks different TODO/FIXME each iter,
+# uses existing LOCK_DIR for dedup. Result: ~10-20× more orchestrate cycles/day.
+nohup bash ~/.surrogate/bin/auto-orchestrate-continuous.sh > "$LOG_DIR/auto-orchestrate-continuous.log" 2>&1 &
+echo "[$(date +%H:%M:%S)] auto-orchestrate-continuous started (4 parallel workers, never sleeps)" >> "$LOG_DIR/boot.log"
 
 # ── 7c. Skill-synthesis daemon (extract patterns from cloned repos → skills) ─
 nohup bash ~/.surrogate/bin/skill-synthesis-daemon.sh > "$LOG_DIR/skill-synthesis.log" 2>&1 &
@@ -258,8 +262,9 @@ while true; do
     [[ $((M % 5)) -eq 0 ]] && bash ~/.surrogate/bin/work-queue-producer.sh >> "$LOG" 2>&1 &
     # Every 3 min: training-pair push to HF (drains ~/.surrogate/training-pairs.jsonl)
     [[ $((M % 3)) -eq 0 ]] && bash ~/.surrogate/bin/push-training-to-hf.sh >> "$LOG" 2>&1 &
-    # Every 20 min: full orchestrate chain (architect → dev → qa → reviewer + git push)
-    [[ $((M % 20)) -eq 0 ]] && bash ~/.surrogate/bin/auto-orchestrate-loop.sh >> "$LOG" 2>&1 &
+    # auto-orchestrate now runs CONTINUOUSLY (4 parallel workers) — see step 7e below.
+    # Cron entry retained for legacy single-fire boost (no harm if continuous already up):
+    [[ $((M % 20)) -eq 0 ]] && pgrep -f "auto-orchestrate-continuous" >/dev/null || bash ~/.surrogate/bin/auto-orchestrate-loop.sh >> "$LOG" 2>&1 &
     # Every 30 min: research-apply (pop queue → orchestrate → ship feature)
     [[ $((M % 30)) -eq 15 ]] && bash ~/.surrogate/bin/surrogate-research-apply.sh >> "$LOG" 2>&1 &
     # Every 60 min: keyword tuner (adapts scrape queue based on yields)
