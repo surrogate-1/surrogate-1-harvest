@@ -1,0 +1,92 @@
+# Surrogate-1 v2 — Stage 1: Code SFT 3 epochs at 32K context
+# Run: axolotl train configs/v2/stage1-sft.yml
+# Compute: ~12-15 hr on Lightning H200 (or ~24 hr on L40S 48GB)
+
+base_model: Qwen/Qwen2.5-Coder-7B-Instruct
+model_type: AutoModelForCausalLM
+tokenizer_type: AutoTokenizer
+trust_remote_code: true
+
+# 4-bit quantization
+load_in_4bit: true
+strict: false
+
+# LoRA config — all-linear + DoRA + r=64 (per Round 1+2 research)
+adapter: lora
+lora_r: 64
+lora_alpha: 128
+lora_dropout: 0.05
+peft_use_dora: true              # +5-10% over plain LoRA
+lora_target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
+
+# Context extension via YaRN (4× from 32K base to 128K serve, train at 32K)
+sequence_len: 32768
+sample_packing: true
+pad_to_sequence_len: true
+rope_theta: 1000000.0
+rope_scaling:
+  type: yarn
+  factor: 4.0
+  original_max_position_embeddings: 32768
+
+# Datasets — 95K curated (Round 2 + 3)
+datasets:
+  - path: axentx/surrogate-1-v2-train       # private aggregated repo
+    type: chat_template
+    field_messages: messages
+
+# Validation split
+val_set_size: 0.02
+output_dir: ./out/v2-stage1-sft
+
+# Training hyperparams
+num_epochs: 3                                # was 1 in v1
+micro_batch_size: 1                          # tight at 32K
+gradient_accumulation_steps: 16              # effective batch = 16
+learning_rate: 1.0e-4                        # was 2e-4 (lower for higher rank)
+lr_scheduler: cosine
+warmup_ratio: 0.03
+optimizer: adamw_torch_fused
+weight_decay: 0.01
+max_grad_norm: 1.0
+
+# Memory tricks
+bf16: true
+fp16: false
+gradient_checkpointing: true
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+flash_attention: true                        # FA3 on H100+, FA2 on L40S
+liger_kernel: true                           # 30-40% memory reduction
+neftune_noise_alpha: 5                       # NEFTune noise injection (small lift)
+
+# Eval
+eval_steps: 200
+save_steps: 200
+save_total_limit: 3
+logging_steps: 10
+
+# Hub push
+hub_model_id: axentx/surrogate-1-coder-7b-lora-v2-sft
+hub_strategy: every_save
+push_to_hub: true
+hub_private_repo: false
+
+# Wandb (optional)
+wandb_project: surrogate-1-v2
+wandb_run_id: stage1-sft
+
+# Special tokens (Hermes XML for tool use stages later)
+special_tokens:
+  pad_token: <|endoftext|>
+
+# Resume from checkpoint
+resume_from_checkpoint: null
+auto_resume_from_checkpoints: true

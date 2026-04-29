@@ -133,6 +133,58 @@ SOURCES = [
     # Smol team
     ("HuggingFaceTB/smoltalk",                 "smoltalk"),
     ("HuggingFaceTB/smollm-corpus",            "smollm-corpus"),
+
+    # ─── v2 Phase A — high-priority code SFT (Round 1+2 research recommendations) ───
+    # These are the BACKBONE of v2: rStar-Coder gave +39pt LCB on 7B-class.
+    # All sanitized + deduped + decontaminated before training.
+    ("microsoft/rStar-Coder",                  "v2-rstar-coder"),         # +39pt LCB on 7B
+    ("nvidia/OpenCodeReasoning-2",             "v2-opencode-reasoning-2"),# R1 reasoning chains
+    ("nvidia/OpenCodeInstruct",                "v2-opencode-instruct"),   # has avg_test_score per row
+    ("inclusionAI/Ling-Coder-SFT",             "v2-ling-coder-sft"),      # 4.48M, 20 langs
+    ("OpenCoder-LLM/opc-sft-stage1",           "v2-opencoder-stage1"),    # transparent recipe
+    ("OpenCoder-LLM/opc-sft-stage2",           "v2-opencoder-stage2"),    # DevSecOps-leaning topics
+
+    # ─── v2 Phase A — tool use (parity with frontier function-calling) ───
+    # Hermes XML format gold standard. xLAM has 3,673 APIs / parallel calls.
+    # Toucan from Kimi-K2 = MCP-grounded real-world tool traces.
+    ("NousResearch/hermes-function-calling-v1","v2-hermes-fc-v1"),         # gold, Apache-2
+    ("Agent-Ark/Toucan-1.5M",                  "v2-toucan-15m"),           # Kimi-K2 MCP traces
+    ("nvidia/When2Call",                       "v2-when2call"),            # refusal/clarify
+    ("Nanbeige/ToolMind",                      "v2-toolmind"),             # graph-syn reasoning
+    ("nvidia/Nemotron-SWE-v1",                 "v2-nemotron-swe"),         # code-exec trajectories
+    ("SWE-Gym/OpenHands-Sampled-Trajectories", "v2-openhands-traj"),       # high-quality SWE
+
+    # ─── v2 Phase A — multi-agent / orchestrator traces ───
+    # Hermes Agent Reasoning = multi-turn tool-use baseline.
+    # Nebius SWE-agent-trajectories filtered to target=true = code editing depth.
+    ("lambda/hermes-agent-reasoning-traces",   "v2-hermes-agent-reason"),
+    ("nebius/SWE-agent-trajectories",          "v2-nebius-swe-traj"),
+    ("SWE-Gym/SWE-Gym",                        "v2-swe-gym"),
+
+    # ─── v2 Phase A — DPO preference pairs ───
+    ("Vezora/Code-Preference-Pairs",           "v2-vezora-codepref"),      # 55K bug/no-bug
+    ("argilla/distilabel-capybara-dpo-7k-binarized", "v2-capybara-dpo"),
+
+    # ─── v2 Phase B — domain expertise (cluster-specific) ───
+    # Will only ingest these once Phase A baseline trained + evaluated.
+    # SDLC / SWE
+    ("SWE-Gym/SWE-smith",                      "v2-swe-smith"),            # NeurIPS 2025
+    ("R2E-Gym/R2E-Gym-Lite",                   "v2-r2e-gym"),              # used by DeepSWE
+    # Security / SOC
+    ("trendmicro-ailab/Primus-FineWeb",        "v2-primus-fineweb"),       # 2.57B cyber tokens
+    ("trendmicro-ailab/Primus-Instruct",       "v2-primus-instruct"),
+    ("trendmicro-ailab/Primus-Reasoning",      "v2-primus-reasoning"),     # +15.8% CISSP lift
+    # Cloud / IaC
+    ("bigcode/the-stack-v2-smol-ids",          "v2-stack-v2-smol"),        # FIM continued pretrain
+    # AI Engineering (smaller mixes)
+    ("microsoft/orca-agentinstruct-1M-v1",     "v2-orca-agent-1m"),        # already above; tag for v2
+    # Customer support / GTM
+    ("bitext/Bitext-customer-support-llm-chatbot-training-dataset", "v2-bitext-cs"),
+    # Finance
+    ("PatronusAI/financebench",                "v2-financebench"),
+    # Safety / refusal restoration (CRITICAL post-fine-tune)
+    ("allenai/wildjailbreak",                  "v2-wildjailbreak"),
+    ("ai4privacy/pii-masking-200k",            "v2-pii-masking"),
 ]
 
 # 5 sibling repos to spread across — round-robin by hash for determinism
