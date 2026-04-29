@@ -30,8 +30,9 @@ For each big community dataset on the SOURCES list:
   1. Use huggingface_hub.snapshot_download to pull the parquet shards
   2. Stream-read each shard, FILTER for SDLC/coding relevance, DEDUP via central
      store, normalize to {prompt, response} schema
-  3. Buffer enriched rows and upload one parquet per source under
-     enriched/<slug>/<shard>.parquet
+  3. Buffer normalized rows and upload one parquet per source under
+     batches/mirror-merged/<date>/<slug>-chunk-<ts>.parquet (clean
+     {prompt, response} schema only — no extra cols)
   4. Stamp a marker so we don't re-mirror next cycle
 
 Why filter: user feedback — 'enrich เอาเฉพาะ dataset เรื่องที่เกี่ยวข้อง + dedup ทิ้ง'.
@@ -163,7 +164,7 @@ for src_id, slug in SOURCES:
         # Old stamp format (just timestamp) — also retry once with new extractor
         pass
     target = pick_repo(slug)
-    print(f"\n▶ enrich+mirror {src_id}  →  {target}/enriched/{slug}/", flush=True)
+    print(f"\n▶ enrich+mirror {src_id}  →  {target}/batches/mirror-merged/{slug}/", flush=True)
     try:
         # Download parquet/jsonl shards
         local = snapshot_download(
@@ -178,16 +179,10 @@ for src_id, slug in SOURCES:
             import pyarrow as pa
             import pyarrow.parquet as pq
         except Exception:
-            print(f"  ❌ pyarrow not available — falling back to raw mirror", flush=True)
-            # last-resort raw upload
-            for f in sorted(local_path.rglob("*.parquet")):
-                if not f.is_file() or f.stat().st_size < 1024: continue
-                api.upload_file(path_or_fileobj=str(f),
-                    path_in_repo=f"raw-mirrors/{slug}/{f.name}",
-                    repo_id=target, repo_type="dataset",
-                    commit_message=f"raw-mirror: {src_id} fallback")
-                mirrored += 1
-                time.sleep(2)
+            # No pyarrow → SKIP. Raw upload would inject mixed-schema parquet
+            # (with full source cols) that breaks training-time dataset loading.
+            # Better to lose this source for this cycle than corrupt schema again.
+            print(f"  ⏭  pyarrow missing — skip {src_id} (would write messy schema)", flush=True)
             continue
 
         scanned = kept = duped = irrelevant = 0
@@ -264,18 +259,22 @@ for src_id, slug in SOURCES:
                 if HAS_DEDUP and not DedupStore.is_new(p, source=f"mirror-{slug}"):
                     duped += 1
                     continue
-                out_rows.append({"prompt": p, "response": r,
-                                  "source": f"mirror/{slug}", "ts": int(time.time())})
+                # CLEAN SCHEMA: only {prompt, response}. Source attribution moves
+                # to filename (batches/mirror-merged/<slug>/...) so training-time
+                # consumers don't have to handle extra cols. This was the cause of
+                # the pyarrow CastError that blocked v1 training (2026-04-29).
+                out_rows.append({"prompt": p, "response": r})
                 kept += 1
 
                 # Periodic flush — keeps memory bounded for huge sources
                 if len(out_rows) >= 50000:
                     chunk_path = CACHE / f"{slug}-chunk-{int(time.time())}.parquet"
                     pq.write_table(pa.Table.from_pylist(out_rows), chunk_path, compression="snappy")
+                    date_tag = time.strftime("%Y-%m-%d")
                     api.upload_file(path_or_fileobj=str(chunk_path),
-                        path_in_repo=f"enriched/{slug}/chunk-{int(time.time())}.parquet",
+                        path_in_repo=f"batches/mirror-merged/{date_tag}/{slug}-chunk-{int(time.time())}.parquet",
                         repo_id=target, repo_type="dataset",
-                        commit_message=f"enriched mirror: {src_id} +{len(out_rows)} rows")
+                        commit_message=f"clean mirror: {src_id} +{len(out_rows)} rows")
                     mirrored += 1
                     out_rows = []
                     chunk_path.unlink()
@@ -284,10 +283,11 @@ for src_id, slug in SOURCES:
         if out_rows:
             chunk_path = CACHE / f"{slug}-final-{int(time.time())}.parquet"
             pq.write_table(pa.Table.from_pylist(out_rows), chunk_path, compression="snappy")
+            date_tag = time.strftime("%Y-%m-%d")
             api.upload_file(path_or_fileobj=str(chunk_path),
-                path_in_repo=f"enriched/{slug}/final-{int(time.time())}.parquet",
+                path_in_repo=f"batches/mirror-merged/{date_tag}/{slug}-final-{int(time.time())}.parquet",
                 repo_id=target, repo_type="dataset",
-                commit_message=f"enriched mirror final: {src_id} +{len(out_rows)} rows")
+                commit_message=f"clean mirror final: {src_id} +{len(out_rows)} rows")
             mirrored += 1
             chunk_path.unlink()
 
