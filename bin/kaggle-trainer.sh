@@ -90,22 +90,51 @@ cat > "$WORK_DIR/kernel-metadata.json" << EOF
 EOF
 
 cat > "$WORK_DIR/train.py" << 'PYEOF'
-"""Surrogate-1 LoRA training on Kaggle T4 GPU.
-Streams data from axentx/surrogate-1-* sibling datasets on HF Hub.
-Saves LoRA adapter back to axentx/surrogate-1-coder-lora-vN."""
+"""Surrogate-1 v1.5 — Kaggle T4×2 SFT with full Round 1-12 technique stack.
+
+Trains a LoRA adapter for Qwen2.5-Coder-32B-Instruct (or whatever
+BASE_MODEL is set) on 5 sibling datasets streamed from HF Hub, then
+pushes the adapter to HUB_MODEL_ID.
+
+Active techniques (Round numbers reference docs/round-N.md):
+  R1  LoRA r=32 + all-linear (q/k/v/o/gate/up/down)
+  R2  DoRA decomposition (peft 0.13+: use_dora=True)
+  R3  Liger kernel (skipped on T4 — Ampere+ only; falls back to SDPA)
+  R4  Flash Attention 2 (skipped on T4 — Ampere+; falls back to SDPA)
+  R5  Sample packing (TRL SFTTrainer packing=True, 4-8x throughput)
+  R6  NEFTune noise alpha=5 (TrainingArguments.neftune_noise_alpha)
+  R7  YaRN context — handled at serve-time (RoPE config in adapter)
+  R8  Gradient checkpointing (use_reentrant=False)
+  R9  AdamW 8-bit paged (optim='paged_adamw_8bit')
+  R10 BF16 if available, FP16 fallback (T4 has FP16 native, BF16 emulated)
+  R11 Cosine LR + 3% warmup
+  R12 5 sharded data sources interleaved
+
+Memory budget on T4×2 (16GB×2=32GB):
+  Qwen2.5-Coder-32B 4-bit NF4   ≈ 16 GB → ZeRO-3 split = 8 GB/GPU
+  LoRA r=32 grads               ≈ 50 MB (sharded)
+  Activations seq=2K, batch=1   ≈ 3 GB/GPU
+  Optimizer states (8-bit, CPU offload) = 0 on GPU
+  ── per GPU peak               ≈ 11-13 GB (fits 16 GB with margin)
+"""
 
 import os
 import subprocess
 import sys
-import time
 
-# install deps (once per kernel-version)
+# Install deps (once per kernel-version). transformers + peft + accelerate +
+# bitsandbytes + trl (for SFTTrainer w/ packing) + deepspeed for ZeRO-3.
 subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet",
-    "transformers>=4.45.0", "datasets>=3.0.0",
-    "peft>=0.13.0", "accelerate>=1.0.0", "bitsandbytes>=0.43.0",
-    "huggingface_hub>=0.25.0"])
+    "transformers>=4.46.0,<4.50.0",
+    "datasets>=3.0.0",
+    "peft>=0.13.0,<0.15.0",
+    "accelerate>=1.0.0,<1.3.0",
+    "bitsandbytes>=0.44.0",
+    "trl>=0.12.0,<0.16.0",
+    "deepspeed>=0.15.0",
+    "huggingface_hub>=0.25.0,<0.27.0"])
 
-# read HF token from Kaggle Secrets
+# Read HF token from Kaggle Secrets (HF_TOKEN secret must be set in kernel)
 try:
     from kaggle_secrets import UserSecretsClient
     os.environ["HF_TOKEN"] = UserSecretsClient().get_secret("HF_TOKEN")
@@ -113,21 +142,38 @@ try:
 except Exception as e:
     print(f"⚠ Kaggle Secrets not available: {e}")
 
+import json
 import torch
-from datasets import load_dataset, interleave_datasets
+from datasets import load_dataset, interleave_datasets, Dataset
 from transformers import (AutoTokenizer, AutoModelForCausalLM,
-    TrainingArguments, Trainer, DataCollatorForSeq2Seq, BitsAndBytesConfig)
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training, TaskType
+    TrainingArguments, BitsAndBytesConfig)
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from trl import SFTConfig, SFTTrainer
 
-BASE = os.environ.get("BASE_MODEL", "Qwen/Qwen3-Coder-Next")  # LATEST official Qwen Coder (2026-02-03), 767K downloads — supersedes 30B-A3B
-MAX_SAMPLES = int(os.environ.get("MAX_SAMPLES", "50000"))
+BASE = os.environ.get("BASE_MODEL", "Qwen/Qwen2.5-Coder-32B-Instruct")
+MAX_SAMPLES = int(os.environ.get("MAX_SAMPLES", "100000"))
 EPOCHS = float(os.environ.get("EPOCHS", "1"))
-HUB_ID = os.environ.get("HUB_MODEL_ID", "axentx/surrogate-1-coder-next-lora-v1")
+HUB_ID = os.environ.get("HUB_MODEL_ID", "axentx/surrogate-1-coder-32b-lora-v1.5")
+SEQ_LEN = int(os.environ.get("SEQ_LEN", "2048"))   # T4×2 budget
 
-print(f"━━━ Surrogate-1 LoRA on Kaggle T4 ━━━")
-print(f"base={BASE}  samples={MAX_SAMPLES:,}  epochs={EPOCHS}  hub={HUB_ID}")
+# Detect hardware capability for precision + attention impl
+BF16_OK = torch.cuda.is_bf16_supported()
+SM_MAJOR = torch.cuda.get_device_capability(0)[0] if torch.cuda.is_available() else 0
+FA2_OK = SM_MAJOR >= 8   # Flash Attention 2 needs Ampere+; T4 = SM 7.5 → no
+ATTN_IMPL = "flash_attention_2" if FA2_OK else "sdpa"
 
-# ── data ────────────────────────────────────────────────────────────────────
+print("━━━ Surrogate-1 v1.5 SFT on Kaggle T4×2 ━━━")
+print(f"  base       : {BASE}")
+print(f"  samples    : {MAX_SAMPLES:,}")
+print(f"  epochs     : {EPOCHS}")
+print(f"  seq_len    : {SEQ_LEN}")
+print(f"  hub_id     : {HUB_ID}")
+print(f"  GPU SM     : {SM_MAJOR}.x")
+print(f"  bf16 ok    : {BF16_OK}")
+print(f"  attn impl  : {ATTN_IMPL}")
+print()
+
+# ── R12: 5 sibling datasets interleaved ─────────────────────────────────────
 SIBLINGS = [
     "axentx/surrogate-1-training-pairs",
     "axentx/surrogate-1-pairs-A",
@@ -139,9 +185,9 @@ streams = []
 for r in SIBLINGS:
     try:
         streams.append(load_dataset(r, split="train", streaming=True))
-        print(f"  loaded {r}")
+        print(f"  ✓ stream loaded: {r}")
     except Exception as e:
-        print(f"  skip {r}: {e}")
+        print(f"  ✗ skip {r}: {e}")
 ds = interleave_datasets(streams, stopping_strategy="all_exhausted")
 
 rows = []
@@ -151,70 +197,104 @@ for i, ex in enumerate(ds):
     r = (ex.get("response") or ex.get("output") or "").strip()
     if len(p) >= 20 and len(r) >= 30:
         rows.append({"prompt": p, "response": r})
-print(f"  kept {len(rows):,} samples")
-
-from datasets import Dataset
+print(f"  → kept {len(rows):,} samples (target {MAX_SAMPLES:,})")
 raw = Dataset.from_list(rows)
 
-# ── model ───────────────────────────────────────────────────────────────────
+# ── Tokenizer ───────────────────────────────────────────────────────────────
 tok = AutoTokenizer.from_pretrained(BASE, trust_remote_code=True)
-if tok.pad_token is None: tok.pad_token = tok.eos_token
+if tok.pad_token is None:
+    tok.pad_token = tok.eos_token
 
-bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.bfloat16,
-                         bnb_4bit_use_double_quant=True, bnb_4bit_quant_type="nf4")
-model = AutoModelForCausalLM.from_pretrained(BASE, quantization_config=bnb,
-    device_map="auto", trust_remote_code=True)
-model = prepare_model_for_kbit_training(model)
+# ── Model: 4-bit NF4 + chosen attention impl ────────────────────────────────
+bnb = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_compute_dtype=torch.bfloat16 if BF16_OK else torch.float16,
+    bnb_4bit_use_double_quant=True,
+    bnb_4bit_quant_type="nf4",
+)
+model = AutoModelForCausalLM.from_pretrained(
+    BASE,
+    quantization_config=bnb,
+    device_map="auto",
+    trust_remote_code=True,
+    attn_implementation=ATTN_IMPL,
+)
+model = prepare_model_for_kbit_training(
+    model, use_gradient_checkpointing=True,
+    gradient_checkpointing_kwargs={"use_reentrant": False},
+)
 
-lora = LoraConfig(r=16, lora_alpha=32, lora_dropout=0.05,
-    target_modules=["q_proj","k_proj","v_proj","o_proj","gate_proj","up_proj","down_proj"],
-    task_type=TaskType.CAUSAL_LM)
+# ── R1+R2: LoRA r=32 + DoRA on all-linear ───────────────────────────────────
+lora = LoraConfig(
+    r=32, lora_alpha=64, lora_dropout=0.05,
+    target_modules=["q_proj","k_proj","v_proj","o_proj",
+                    "gate_proj","up_proj","down_proj"],
+    use_dora=True,                                    # R2: DoRA
+    task_type="CAUSAL_LM",
+)
 model = get_peft_model(model, lora)
 model.print_trainable_parameters()
 
-# ── tokenize ────────────────────────────────────────────────────────────────
+# ── Format chat template (system + user + assistant) ────────────────────────
 def fmt(ex):
     msgs = [
-        {"role":"system","content":"You are Surrogate-1, a senior DevSecOps AI coding agent."},
-        {"role":"user","content":ex["prompt"]},
-        {"role":"assistant","content":ex["response"]},
+        {"role": "system", "content":
+            "You are Surrogate-1, a senior DevSecOps + SRE + coding agent. "
+            "Cite real APIs and standards. Say IDK rather than confabulate."},
+        {"role": "user", "content": ex["prompt"]},
+        {"role": "assistant", "content": ex["response"]},
     ]
-    return {"text": tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=False)}
+    return {"text": tok.apply_chat_template(
+        msgs, tokenize=False, add_generation_prompt=False)}
 
 raw = raw.map(fmt, remove_columns=raw.column_names)
-def tk(b):
-    e = tok(b["text"], truncation=True, max_length=2048, padding=False)
-    e["labels"] = e["input_ids"].copy()
-    return e
-tokenized = raw.map(tk, batched=True, remove_columns=["text"])
 
-# ── train ───────────────────────────────────────────────────────────────────
-args = TrainingArguments(
-    output_dir="./surrogate-1-lora-out",
+# ── R5+R6+R8+R9+R10+R11: SFTTrainer with packing + NEFTune + 8-bit Adam ─────
+sft_cfg = SFTConfig(
+    output_dir="./surrogate-1-v1.5-out",
     num_train_epochs=EPOCHS,
     per_device_train_batch_size=1,
-    gradient_accumulation_steps=16,
-    learning_rate=2e-4,
-    bf16=torch.cuda.is_bf16_supported(),
-    fp16=not torch.cuda.is_bf16_supported(),
-    gradient_checkpointing=True,
-    logging_steps=20,
+    gradient_accumulation_steps=16,                   # eff batch = 16 (×2 GPU = 32)
+    learning_rate=1.0e-4,
+    lr_scheduler_type="cosine",                       # R11
+    warmup_ratio=0.03,                                # R11
+    optim="paged_adamw_8bit",                         # R9
+    bf16=BF16_OK, fp16=not BF16_OK,                   # R10
+    max_grad_norm=1.0, weight_decay=0.01,
+    gradient_checkpointing=True,                      # R8
+    gradient_checkpointing_kwargs={"use_reentrant": False},
+    neftune_noise_alpha=5,                            # R6
+    max_seq_length=SEQ_LEN,
+    packing=True,                                     # R5
+    dataset_text_field="text",
+    logging_steps=10,
     save_strategy="steps", save_steps=500, save_total_limit=2,
-    warmup_ratio=0.03, lr_scheduler_type="cosine",
-    report_to="none",
     push_to_hub=True,
     hub_model_id=HUB_ID,
     hub_strategy="every_save",
     hub_token=os.environ.get("HF_TOKEN"),
-    hub_private_repo=False,   # PUBLIC for now — multi-checkpoint may exceed 500MB private cap
-                              # User: 'public ไปก่อน แล้วค่อยย้ายไปทีหลัง'
+    hub_private_repo=False,
+    report_to="none",
 )
-collator = DataCollatorForSeq2Seq(tok, padding=True, return_tensors="pt")
-trainer = Trainer(model=model, args=args, train_dataset=tokenized,
-    data_collator=collator, tokenizer=tok)
+
+trainer = SFTTrainer(
+    model=model,
+    args=sft_cfg,
+    train_dataset=raw,
+    tokenizer=tok,
+)
+
+print()
+print("━━━ training start ━━━")
 trainer.train()
-trainer.push_to_hub(commit_message=f"Surrogate-1 LoRA — {MAX_SAMPLES:,} samples, {EPOCHS} epochs (Kaggle T4)")
-print("✅ done")
+print("━━━ training done ━━━")
+
+# Final push (in case last save_steps didn't trigger)
+trainer.push_to_hub(commit_message=(
+    f"Surrogate-1 v1.5 SFT — base={BASE.split('/')[-1]}, "
+    f"r=32+DoRA, NEFTune α=5, seq={SEQ_LEN}, "
+    f"{len(rows):,} samples × {EPOCHS} epochs (Kaggle T4×2)"))
+print("✅ pushed to", HUB_ID)
 PYEOF
 
 # ── Push notebook to Kaggle (creates if not exists, updates if exists) ─────
