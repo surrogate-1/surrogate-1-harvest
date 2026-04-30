@@ -35,29 +35,44 @@ OUT="${OUT_DIR}/${DOMAIN}-${DATE}.jsonl"
 
 echo "[$(date '+%H:%M:%S')] synth-puller domain=$DOMAIN count=$COUNT" >> "$LOG"
 
-# Gradio /api/predict format: {"data": [domain, count], "fn_index": 0}
-# But api_name="synth_batch" → /run/synth_batch endpoint preferred
-RESP=$(curl -fsS --max-time 320 \
+# Gradio 4.44 API: POST /call/<api_name> → returns {event_id} → GET
+# /call/<api_name>/<event_id> streams server-sent events (SSE) until
+# 'complete' with the result payload. The legacy /run/<api_name> path
+# returns 'API endpoint does not accept direct HTTP POST' on queued
+# Spaces (gradio 4.x with .queue() enabled), so this route is required.
+TOK="${HF_TOKEN_PRO:-${HF_TOKEN:-}}"
+EVT=$(curl -fsS --max-time 30 -X POST \
     -H "Content-Type: application/json" \
-    -H "Authorization: Bearer ${HF_TOKEN_PRO:-${HF_TOKEN:-}}" \
+    -H "Authorization: Bearer ${TOK}" \
     -d "{\"data\":[\"${DOMAIN}\", ${COUNT}]}" \
-    "${SPACE_URL}/run/synth_batch" 2>&1)
+    "${SPACE_URL}/call/synth_batch" 2>&1 \
+  | python3 -c "import json,sys; print(json.load(sys.stdin).get('event_id',''))" 2>/dev/null)
 
-if [[ -z "$RESP" ]]; then
-    echo "[$(date '+%H:%M:%S')] FAIL — empty response (Space cold/down)" >> "$LOG"
+if [[ -z "$EVT" ]]; then
+    echo "[$(date '+%H:%M:%S')] FAIL — no event_id (Space cold/down)" >> "$LOG"
     exit 1
 fi
 
-# Extract JSONL from Gradio response: {"data": ["<jsonl-string>"]}
+# Poll the SSE stream. Cold-start can take 60-120s for model load on
+# first hit; warm calls return in 30-60s for count=12 pairs.
+RESP=$(curl -fsS --max-time 320 \
+    -H "Authorization: Bearer ${TOK}" \
+    "${SPACE_URL}/call/synth_batch/${EVT}" 2>&1)
+
+# SSE format: 'event: complete\ndata: ["<jsonl-string>"]\n\n' (last block).
 JSONL=$(echo "$RESP" | python3 -c "
-import json, sys
+import json, re, sys
+text = sys.stdin.read()
+# Find 'event: complete' block; data line is the JSON list
+blocks = re.findall(r'event:\s*complete\s*\ndata:\s*(.*)', text)
+if not blocks:
+    print('', file=sys.stderr); sys.exit(1)
 try:
-    d = json.load(sys.stdin)
-    out = (d.get('data') or [''])[0]
+    d = json.loads(blocks[-1])
+    out = (d or [''])[0]
     print(out if isinstance(out, str) else '')
-except Exception as e:
-    print('', file=sys.stderr)
-    sys.exit(1)
+except Exception:
+    print('', file=sys.stderr); sys.exit(1)
 ")
 
 if [[ -z "$JSONL" ]]; then
