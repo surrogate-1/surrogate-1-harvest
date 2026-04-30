@@ -352,6 +352,14 @@ done
 TOTAL_WORKERS=$((BULK_WORKERS + STREAM_WORKERS))
 echo "[$(date +%H:%M:%S)] bulk-mirror coordinator + $BULK_WORKERS bulk + $STREAM_WORKERS streaming = $TOTAL_WORKERS workers (200+ datasets queued, LOW_MEM=$LOW_MEM)" >> "$LOG_DIR/boot.log"
 
+# ── 7d2. Continuous multi-source dataset discoverer (boot daemon, never exits) ─
+# Replaces aggressive-harvester cron — runs always, sweeps HF + arxiv + SE + GH.
+if ! pgrep -f "continuous-discoverer.sh" >/dev/null; then
+    nohup bash ~/.surrogate/bin/v2/continuous-discoverer.sh \
+        > "$LOG_DIR/continuous-discoverer.log" 2>&1 &
+    echo "[$(date +%H:%M:%S)] continuous-discoverer started (HF + arxiv + SE + GH, ~5min cycle)" >> "$LOG_DIR/boot.log"
+fi
+
 # ── 7d. Train-ready pusher — disabled at boot for now. Caused Space
 #       RUNTIME_ERROR on first deployment (2026-04-29). Script kept at
 #       bin/train-ready-pusher.sh; launch manually after Space proves stable:

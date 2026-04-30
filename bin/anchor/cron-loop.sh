@@ -58,6 +58,13 @@ start_workers_once bulk "$BULK_WORKERS"
 start_workers_once streaming "$STREAM_WORKERS"
 echo "[$(date '+%H:%M:%S')] worker fleet up: $BULK_WORKERS bulk + $STREAM_WORKERS streaming" >> "$LOG"
 
+# Continuous discoverer — boot daemon (anchor durable, never restarts)
+if ! pgrep -f "continuous-discoverer.sh" >/dev/null; then
+    nohup bash "${REPO}/bin/v2/continuous-discoverer.sh" \
+        > "/data/logs/continuous-discoverer.log" 2>&1 &
+    echo "[$(date '+%H:%M:%S')] continuous-discoverer started (anchor, never exits)" >> "$LOG"
+fi
+
 # ── Cron loop ──────────────────────────────────────────────────────────
 while true; do
     M=$(($(date +%s) / 60))

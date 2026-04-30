@@ -21,8 +21,8 @@ while true; do
     MAX_N=$(echo "$TASK" | python3 -c "import sys, json; print(json.load(sys.stdin).get('max_samples') or 50000)")
 
     if [[ -z "$REPO" || "$REPO" == "None" ]]; then
-        echo "[$(date +%H:%M:%S)] no work; sleep 5 min" | tee -a "$LOG"
-        sleep 300
+        echo "[$(date +%H:%M:%S)] queue empty; sleep 30s (discoverer feeds)" >> "$LOG"
+        sleep 30
         continue
     fi
 
