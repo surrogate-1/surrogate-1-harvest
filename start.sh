@@ -264,18 +264,25 @@ chmod +x /tmp/scrape-daemon.sh
 nohup /tmp/scrape-daemon.sh > "$LOG_DIR/scrape-daemon.log" 2>&1 &
 echo "[$(date +%H:%M:%S)] scrape daemon parallel=${SCRAPE_PARALLEL} (LOW_MEM=$LOW_MEM)" >> "$LOG_DIR/boot.log"
 
-# ── 7b. Agentic crawler ────────────────────────────────────────────────────
-CRAWLER_PARALLEL="${CRAWLER_PARALLEL:-$([[ "$LOW_MEM" == "1" ]] && echo 2 || echo 6)}"
-nohup bash ~/.surrogate/bin/agentic-crawler.sh "$CRAWLER_PARALLEL" > "$LOG_DIR/agentic-crawler.log" 2>&1 &
-echo "[$(date +%H:%M:%S)] agentic crawler parallel=$CRAWLER_PARALLEL" >> "$LOG_DIR/boot.log"
+# ── 7b. Agentic crawler — DISABLED on LOW_MEM (anchor takes this load) ─────
+if [[ "$LOW_MEM" != "1" ]]; then
+    CRAWLER_PARALLEL="${CRAWLER_PARALLEL:-6}"
+    nohup bash ~/.surrogate/bin/agentic-crawler.sh "$CRAWLER_PARALLEL" \
+        > "$LOG_DIR/agentic-crawler.log" 2>&1 &
+    echo "[$(date +%H:%M:%S)] agentic crawler parallel=$CRAWLER_PARALLEL" >> "$LOG_DIR/boot.log"
+else
+    echo "[$(date +%H:%M:%S)] ⚠ agentic-crawler SKIPPED (LOW_MEM); anchor handles" >> "$LOG_DIR/boot.log"
+fi
 
-# ── 7b2. GitHub-specific agentic crawler (lightweight — keep on) ───────────
+# ── 7b2. GitHub-specific agentic crawler (lightweight, keep on always) ─────
 nohup bash ~/.surrogate/bin/github-agentic-crawler.sh > "$LOG_DIR/github-agentic-crawler.log" 2>&1 &
 echo "[$(date +%H:%M:%S)] github-agentic-crawler started" >> "$LOG_DIR/boot.log"
 
-# ── 7b3. HF Dataset Discoverer ─────────────────────────────────────────────
-nohup bash ~/.surrogate/bin/hf-dataset-discoverer.sh > "$LOG_DIR/hf-dataset-discoverer.log" 2>&1 &
-echo "[$(date +%H:%M:%S)] hf-dataset-discoverer started" >> "$LOG_DIR/boot.log"
+# ── 7b3. HF Dataset Discoverer — DISABLED (replaced by continuous-discoverer) ─
+# Round 10 (a27499d): bin/v2/continuous-discoverer.sh covers HF + arxiv +
+# Stack Exchange + GH trending in one daemon. Old hf-dataset-discoverer.sh
+# is now redundant + memory pressure on cpu-basic.
+echo "[$(date +%H:%M:%S)] ⚠ hf-dataset-discoverer SKIPPED (replaced by continuous-discoverer)" >> "$LOG_DIR/boot.log"
 
 # ── 7e. auto-orchestrate-continuous — DISABLED on LOW_MEM (cron handles it) ─
 if [[ "$LOW_MEM" != "1" ]]; then
@@ -323,9 +330,13 @@ echo "[$(date +%H:%M:%S)] bulk-ingest-parallel started (6 shards, 293M total cap
 PARQUET_PARALLEL=2 nohup bash ~/.surrogate/bin/parquet-direct-ingest.sh > "$LOG_DIR/parquet-direct-ingest.log" 2>&1 &
 echo "[$(date +%H:%M:%S)] parquet-direct-ingest started (2 parallel DLs)" >> "$LOG_DIR/boot.log"
 
-# ── 7c. Skill-synthesis daemon (extract patterns from cloned repos → skills) ─
-nohup bash ~/.surrogate/bin/skill-synthesis-daemon.sh > "$LOG_DIR/skill-synthesis.log" 2>&1 &
-echo "[$(date +%H:%M:%S)] skill-synthesis daemon started" >> "$LOG_DIR/boot.log"
+# ── 7c. Skill-synthesis daemon — DISABLED on LOW_MEM (heavy LLM calls) ────
+if [[ "$LOW_MEM" != "1" ]]; then
+    nohup bash ~/.surrogate/bin/skill-synthesis-daemon.sh > "$LOG_DIR/skill-synthesis.log" 2>&1 &
+    echo "[$(date +%H:%M:%S)] skill-synthesis daemon started" >> "$LOG_DIR/boot.log"
+else
+    echo "[$(date +%H:%M:%S)] ⚠ skill-synthesis SKIPPED (LOW_MEM); anchor's voyager-skills.py covers" >> "$LOG_DIR/boot.log"
+fi
 
 # ── 7d. Bulk mirror coordinator + 4 parallel workers ────────────────────────
 # User feedback 2026-04-29: "ทุก agent ทำงานร่วมกัน และไม่ไปที่ซ้ำๆ".
@@ -338,7 +349,10 @@ python3 ~/.surrogate/bin/v2/bulk-mirror-coordinator.py seed >> "$LOG_DIR/bulk-mi
 # Two worker types share the same coordinator queue:
 #   bulk-mirror-worker.sh    — full-download, suits small/medium datasets
 #   streaming-mirror-worker.sh — HF datasets streaming, suits trillion-token
-BULK_WORKERS="${BULK_WORKERS:-$([[ "$LOW_MEM" == "1" ]] && echo 1 || echo 4)}"
+# LOW_MEM tuned for cpu-basic 16GB after Round 9+10 OOM:
+# 0 bulk (full-download too heavy) + 2 streaming (lighter) on LOW_MEM
+# Anchor handles bulk via 24GB ARM headroom.
+BULK_WORKERS="${BULK_WORKERS:-$([[ "$LOW_MEM" == "1" ]] && echo 0 || echo 4)}"
 STREAM_WORKERS="${STREAM_WORKERS:-$([[ "$LOW_MEM" == "1" ]] && echo 2 || echo 4)}"
 
 for i in $(seq 1 "$BULK_WORKERS"); do
