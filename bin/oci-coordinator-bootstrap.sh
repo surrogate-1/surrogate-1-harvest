@@ -20,8 +20,13 @@ set -euo pipefail
 
 REPO_URL="${REPO_URL:-https://github.com/arkashira/surrogate-1-harvest.git}"
 INSTALL_DIR="/opt/surrogate-1-harvest"
+# Detect the right user for the OS image. Both Oracle Linux (opc) and
+# Ubuntu (ubuntu) directories may exist on the same image; prefer ubuntu
+# when /home/ubuntu has the cloud-init authorized_keys baked in.
 SVC_USER="ubuntu"
-[ -d "/home/opc" ] && SVC_USER="opc"
+if [ ! -d "/home/ubuntu/.ssh" ] && [ -d "/home/opc/.ssh" ]; then
+    SVC_USER="opc"
+fi
 ENV_FILE="/etc/surrogate-coordinator.env"
 
 echo "[bootstrap] target user: $SVC_USER"
