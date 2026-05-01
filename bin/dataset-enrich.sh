@@ -837,6 +837,7 @@ with open(out_path, "w") as out:
                 try:
                     import urllib.request as _u, json as _j
                     _adv_url = f"{os.environ.get('CURSOR_SERVICE_URL', 'https://surrogate-1-cursor.ashira.workers.dev')}/cursor/{slug}/advance"
+                    _adv_token = os.environ.get('CURSOR_AUTH_TOKEN', '')
                     _req = _u.Request(_adv_url, method="POST",
                                        data=_j.dumps({"n": total}).encode(),
                                        headers={"Content-Type": "application/json"})
