@@ -241,17 +241,27 @@ def main() -> int:
     log(f"=== tick @ {now.isoformat()}Z — {len(jobs)} jobs total, "
         f"{len(fired)} due, {skipped_recent} dedup-skipped ===")
 
+    # Parallel execution. With 21–31 jobs/tick × 3–5s/job serial = 90–150s,
+    # blowing past the 55s coordinator-loop kill. 8 workers means ~3–4s
+    # wall-clock for a typical batch.
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     successes = failures = 0
-    for job in fired:
-        ok, output = execute_job(job)
-        job_id = job.get("id", job.get("name", "?"))
-        last_run[job_id] = now.isoformat()
-        if ok:
-            successes += 1
-            log(f"    ✓ {job_id}: ok ({len(output)} chars)")
-        else:
-            failures += 1
-            log(f"    ✗ {job_id}: {output[:200]}")
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {pool.submit(execute_job, j): j for j in fired}
+        for fut in as_completed(futures, timeout=50):
+            job = futures[fut]
+            job_id = job.get("id", job.get("name", "?"))
+            try:
+                ok, output = fut.result()
+            except Exception as e:
+                ok, output = False, f"exec exception: {e}"
+            last_run[job_id] = now.isoformat()
+            if ok:
+                successes += 1
+                log(f"    ✓ {job_id}: ok ({len(output)} chars)")
+            else:
+                failures += 1
+                log(f"    ✗ {job_id}: {output[:200]}")
 
     save_last_run(last_run)
     log(f"=== tick done — {successes} ok, {failures} fail ===")
