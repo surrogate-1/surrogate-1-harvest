@@ -25,6 +25,29 @@ from axentx_pipeline import (REPO_ROOT, QUEUES, log, call_llm, synthesize,
 PROJECTS_ROOT = Path(os.environ.get("AXENTX_ROOT", "/opt/axentx"))
 ROTATION = ["Costinel", "vanguard", "airship", "axiomops", "workio", "surrogate-1"]
 FOCUS_CYCLE = ["discovery", "design", "backend", "frontend", "quality", "ops"]
+
+
+def _load_knowledge_index() -> str:
+    """Read knowledge_index.md (pattern → solution map) once at module load.
+    Lessons learned + past patterns get prepended to every dev prompt so the
+    LLM sees what we've solved before instead of re-discovering it."""
+    candidates = [
+        REPO_ROOT / "data" / "memory" / "knowledge_index.md",
+        Path.home() / ".claude" / "memory" / "knowledge_index.md",
+    ]
+    for p in candidates:
+        try:
+            if p.exists():
+                txt = p.read_text(errors="replace")
+                # Cap at 6KB so we don't blow the prompt budget
+                return txt[:6000]
+        except Exception:
+            continue
+    return "(knowledge_index.md not available)"
+
+
+KNOWLEDGE_INDEX = _load_knowledge_index()
+
 CURSOR_FILE = REPO_ROOT / "state" / "axentx-dev-cursor.json"
 NEW_TASK_INTERVAL = int(os.environ.get("DEV_DAEMON_INTERVAL_SEC", "300"))
 
@@ -36,6 +59,10 @@ questions — make best-judgement calls and proceed."""
 
 PROMPT_TPL = """Project: {project} (located at {repo_path})
 Focus: {focus}
+
+Past patterns + lessons learned (apply these — don't re-discover):
+{knowledge_index}
+
 
 Recent commits in this repo:
 {git_log}
@@ -173,7 +200,8 @@ def do_one_cycle() -> bool:
     git_log, readme, prior = repo_context(project)
     prompt = PROMPT_TPL.format(
         project=project, repo_path=repo_path,
-        focus=focus, git_log=git_log, readme=readme, prior_decisions=prior)
+        focus=focus, git_log=git_log, readme=readme, prior_decisions=prior,
+        knowledge_index=KNOWLEDGE_INDEX)
     # Synthesis pass = 3 LLM attempts + 1 synth. Heavier but better quality.
     # Toggle SYNTH_DEV=0 to fall back to single call_llm.
     synth_enabled = os.environ.get("SYNTH_DEV", "1") == "1"

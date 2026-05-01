@@ -159,6 +159,32 @@ def call_llm(prompt: str, system: str = "", max_tokens: int = 1500,
             last_err = f"{name}/{model}: {e}"
             continue
 
+    # Cloudflare Workers AI — 12th provider, 10k neurons/day free
+    # Different API shape (path-based model + Cloudflare wrapper) so handled
+    # outside the OpenAI-compatible loop above. Free tier covers ~hundreds of
+    # short completions per day → useful as last-line resilience when all the
+    # 8 OpenAI-compatible providers have rate-limited / errored.
+    cf_token = os.environ.get("CLOUDFLARE_API_TOKEN")
+    cf_acct = os.environ.get("CLOUDFLARE_ACCOUNT_ID")
+    if cf_token and cf_acct:
+        cf_model = os.environ.get("CF_AI_MODEL", "@cf/meta/llama-3.1-8b-instruct")
+        try:
+            req = urllib.request.Request(
+                f"https://api.cloudflare.com/client/v4/accounts/{cf_acct}/ai/run/{cf_model}",
+                data=json.dumps({"messages": messages, "max_tokens": max_tokens}).encode(),
+                headers={
+                    "Authorization": f"Bearer {cf_token}",
+                    "Content-Type": "application/json",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                d = json.loads(r.read())
+                if d.get("success"):
+                    return d["result"]["response"]
+                last_err = f"CF-AI/{cf_model}: {d.get('errors')}"
+        except Exception as e:
+            last_err = f"CF-AI/{cf_model}: {e} (after {last_err})"
+
     # Gemini (different API shape — handled separately)
     try:
         return _call_gemini(prompt, system, max_tokens, timeout)

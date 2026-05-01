@@ -40,3 +40,13 @@ CREATE TABLE IF NOT EXISTS metrics (
     key  TEXT PRIMARY KEY,
     n    INTEGER NOT NULL DEFAULT 0
 );
+
+-- Round 3 (2026-05-02) — CF expansion: scheduled health pings
+CREATE TABLE IF NOT EXISTS space_health (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    space_id    TEXT NOT NULL,
+    http_code   INTEGER,
+    latency_ms  INTEGER,
+    ts          INTEGER NOT NULL DEFAULT (unixepoch())
+);
+CREATE INDEX IF NOT EXISTS idx_space_health_ts ON space_health(ts DESC);
