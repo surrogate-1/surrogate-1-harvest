@@ -17,7 +17,6 @@ STATE_DIR.mkdir(parents=True, exist_ok=True)
 INTERVAL = int(os.environ.get("SELF_HEAL_INTERVAL_SEC", "180"))
 
 SERVICES = {
-    "surrogate-coordinator":   "hermes-cron dispatcher",
     "axentx-dev-daemon":       "dev (producer)",
     "axentx-reviewer-daemon":  "reviewer",
     "axentx-qa-daemon":        "qa",
