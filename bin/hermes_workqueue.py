@@ -5,8 +5,15 @@ Pattern (matches axentx_pipeline.py):
   scheduler-daemon → pushes due jobs to tasks-queue/
   worker-daemon × N → pulls oldest from queue, executes, moves to done/
 
-No cron-tick dispatcher. Schedulers and workers are all continuous daemons
-working via shared file-system queue (state/hermes-tasks/...).
+Two backends:
+  - filesystem (default): state/hermes-tasks/{pending,running,done,failed}
+    Single-host only (no cross-host visibility).
+  - postgres (SUPABASE_URL env set): cross-host queue via Supabase PostgREST.
+    GCP + OCI workers share the same queue — any host produces, any host
+    consumes. Atomic claim via FOR UPDATE SKIP LOCKED on the server.
+
+Switch backends with HERMES_QUEUE_BACKEND={fs|pg|auto}. "auto" picks pg if
+SUPABASE_URL is set, else fs.
 """
 from __future__ import annotations
 
@@ -26,9 +33,27 @@ QUEUES = {
 }
 LOG_DIR = REPO_ROOT / "logs"
 
-for q in QUEUES.values():
-    q.mkdir(parents=True, exist_ok=True)
-LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+# ── Backend selection ──────────────────────────────────────────────────────
+_BACKEND_PREF = os.environ.get("HERMES_QUEUE_BACKEND", "auto").lower()
+_USE_PG = (
+    _BACKEND_PREF == "pg"
+    or (_BACKEND_PREF == "auto" and bool(os.environ.get("SUPABASE_URL")))
+)
+BACKEND = "pg" if _USE_PG else "fs"
+
+# Only create the filesystem queue dirs when the FS backend is active.
+# In PG mode there's nothing to provision locally — and on dev machines
+# /opt/surrogate-1-harvest doesn't even exist (would PermissionError).
+if BACKEND == "fs":
+    for _q in QUEUES.values():
+        _q.mkdir(parents=True, exist_ok=True)
+# Logs go local either way (every host writes its own log file).
+try:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+except (PermissionError, OSError):
+    LOG_DIR = Path(os.environ.get("TMPDIR", "/tmp")) / "hermes-logs"
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def log(role: str, msg: str) -> None:
@@ -72,8 +97,8 @@ def _field_match(field: str, value: int, lo: int, hi: int) -> bool:
     return False
 
 
-def push_task(job: dict, fired_at: datetime.datetime) -> Path:
-    """Atomically write a task to pending/ keyed by job-id+timestamp."""
+def _fs_push_task(job: dict, fired_at: datetime.datetime) -> Path:
+    """Filesystem backend: atomically write to pending/ keyed by job-id+timestamp."""
     job_id = job.get("id", job.get("name", "anon"))
     fname = f"{fired_at.strftime('%Y%m%d-%H%M%S')}-{job_id}.json"
     path = QUEUES["pending"] / fname
@@ -96,8 +121,8 @@ def push_task(job: dict, fired_at: datetime.datetime) -> Path:
     return path
 
 
-def claim_oldest_pending() -> tuple[Path, dict] | None:
-    """Atomically rename oldest pending → running/. Race-safe between workers."""
+def _fs_claim_oldest_pending() -> tuple[Path, dict] | None:
+    """Filesystem backend: atomic rename oldest pending → running/. Race-safe between workers."""
     files = sorted(QUEUES["pending"].glob("*.json"), key=lambda p: p.stat().st_mtime)
     for src in files:
         dst = QUEUES["running"] / src.name
@@ -113,8 +138,8 @@ def claim_oldest_pending() -> tuple[Path, dict] | None:
     return None
 
 
-def finish_task(running_path: Path, item: dict, ok: bool, output: str) -> None:
-    """Move running/<id>.json → done/<id>.json (or failed/) with output."""
+def _fs_finish_task(running_path: Path, item: dict, ok: bool, output: str) -> None:
+    """Filesystem backend: move running/<id>.json → done/<id>.json (or failed/)."""
     item["finished_at"] = datetime.datetime.utcnow().isoformat() + "Z"
     item["ok"] = ok
     item["output"] = output[:6000]
@@ -124,8 +149,37 @@ def finish_task(running_path: Path, item: dict, ok: bool, output: str) -> None:
     running_path.unlink(missing_ok=True)
 
 
-def gc_done(keep_hours: int = 24) -> int:
-    """Sweep done/ + failed/ — drop entries older than keep_hours.
+# ── Public API: dispatch to the active backend ─────────────────────────────
+# Daemons import push_task / claim_oldest_pending / finish_task by these names
+# and don't care which backend they're on. Switch via HERMES_QUEUE_BACKEND or
+# by setting/unsetting SUPABASE_URL.
+if BACKEND == "pg":
+    # Lazy-import so machines without the PG adapter file still load this module
+    from hermes_workqueue_pg import (
+        push_task as _pg_push,
+        claim_oldest_pending as _pg_claim,
+        finish_task as _pg_finish,
+    )
+
+    def push_task(job: dict, fired_at: datetime.datetime):
+        return _pg_push(job, fired_at)
+
+    def claim_oldest_pending():
+        return _pg_claim()
+
+    def finish_task(handle, item: dict, ok: bool, output: str) -> None:
+        # PG backend uses a bigint row id; FS backend uses a Path. Daemons
+        # treat the handle as opaque, so this is a transparent swap.
+        _pg_finish(int(handle) if not isinstance(handle, int) else handle,
+                   item, ok, output)
+else:
+    push_task = _fs_push_task
+    claim_oldest_pending = _fs_claim_oldest_pending
+    finish_task = _fs_finish_task
+
+
+def _fs_gc_done(keep_hours: int = 24) -> int:
+    """Filesystem backend: sweep done/ + failed/ for entries older than keep_hours.
     Without GC the queue dirs grow forever and wedge inotify watchers."""
     cutoff = datetime.datetime.utcnow().timestamp() - keep_hours * 3600
     n = 0
@@ -135,3 +189,20 @@ def gc_done(keep_hours: int = 24) -> int:
                 f.unlink(missing_ok=True)
                 n += 1
     return n
+
+
+if BACKEND == "pg":
+    from hermes_workqueue_pg import gc_done as _pg_gc, reap_stuck as _pg_reap
+
+    def gc_done(keep_hours: int = 24) -> int:
+        return _pg_gc(keep_hours)
+
+    def reap_stuck(timeout_min: int = 10) -> int:
+        """PG-only: re-queue rows stuck in 'running' (worker died mid-task)."""
+        return _pg_reap(timeout_min)
+else:
+    gc_done = _fs_gc_done
+
+    def reap_stuck(timeout_min: int = 10) -> int:
+        """No-op on filesystem backend (single-host = no stuck-elsewhere risk)."""
+        return 0
