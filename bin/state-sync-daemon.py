@@ -247,7 +247,14 @@ def rsync_state() -> None:
 
 def commit_and_push() -> bool:
     """Stage everything, commit if there's a real diff, push. Returns True
-    if a commit was made."""
+    if a commit was made.
+
+    Multi-writer safety: BOTH GCP and Kamatera run state-sync-daemon. They
+    push to the same `state` branch, so we MUST pull-rebase before push.
+    With rsync filling the working tree, conflicts are unlikely (each VM
+    contributes its own host-tagged history) but `git pull --rebase` keeps
+    the branch linear regardless.
+    """
     run(["git", "add", "-A"], cwd=SNAPSHOT_DIR)
     diff = run(["git", "diff", "--cached", "--stat"],
                cwd=SNAPSHOT_DIR, check=False)
@@ -257,15 +264,35 @@ def commit_and_push() -> bool:
     name_status = run(["git", "diff", "--cached", "--name-only"],
                       cwd=SNAPSHOT_DIR, check=False)
     n_files = len([ln for ln in (name_status.stdout or "").splitlines() if ln])
-    msg = f"state sync: {n_files} files updated @ {datetime.datetime.utcnow().isoformat()}Z"
+    import socket as _s
+    host = _s.gethostname()
+    msg = (f"state sync: {n_files} files updated @ "
+           f"{datetime.datetime.utcnow().isoformat()}Z [{host}]")
     run(["git", "commit", "-m", msg], cwd=SNAPSHOT_DIR)
-    # Push (set upstream on first run)
-    push = run(["git", "push", "-u", REMOTE_NAME, BRANCH],
-               cwd=SNAPSHOT_DIR, check=False, timeout=60)
-    if push.returncode != 0:
-        log(f"  push failed: {(push.stderr or '')[:200]}")
-        return False
-    return True
+    # Push, with one pull-rebase retry on rejection (multi-writer race).
+    for attempt in (1, 2, 3):
+        push = run(["git", "push", "-u", REMOTE_NAME, BRANCH],
+                   cwd=SNAPSHOT_DIR, check=False, timeout=60)
+        if push.returncode == 0:
+            return True
+        # Rejection — try fetch + rebase + push again
+        log(f"  push attempt {attempt} rejected — pull-rebase + retry")
+        run(["git", "fetch", REMOTE_NAME, BRANCH],
+            cwd=SNAPSHOT_DIR, check=False, timeout=30)
+        rebase = run(["git", "rebase", f"{REMOTE_NAME}/{BRANCH}"],
+                     cwd=SNAPSHOT_DIR, check=False, timeout=30)
+        if rebase.returncode != 0:
+            # Conflict — abort rebase and reset hard to remote.
+            # Our local changes will get re-rsync'd next cycle anyway, so
+            # discarding them is safe (state is regenerable from /opt).
+            run(["git", "rebase", "--abort"], cwd=SNAPSHOT_DIR, check=False)
+            run(["git", "reset", "--hard", f"{REMOTE_NAME}/{BRANCH}"],
+                cwd=SNAPSHOT_DIR, check=False)
+            log("  rebase conflict — reset to remote, will re-sync next cycle")
+            return False
+        time.sleep(1 + attempt)  # back-off
+    log(f"  push failed after 3 attempts: {(push.stderr or '')[:200]}")
+    return False
 
 
 def sync_once() -> int:
