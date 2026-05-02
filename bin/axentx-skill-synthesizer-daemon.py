@@ -399,16 +399,26 @@ def do_one_cycle() -> bool:
                         -len({e.get("agent") for e in kv[1]})),
     )
     n_synthed = 0
+    n_attempts = 0
+    # Cap TOTAL attempts (not just successes) — synthesizing burns ~3500
+    # decision-grade tokens each + every failed attempt still hits the
+    # rate-limit budget. Limit MAX_ATTEMPTS_PER_CYCLE to stop hot-pattern
+    # cycles eating the entire LLM TPD.
+    max_attempts = int(os.environ.get("SKILL_MAX_ATTEMPTS_PER_CYCLE", "3"))
     for pattern, examples in ranked:
         if len(examples) < MIN_REPEAT:
             break  # ranked desc, rest are smaller
         n_distinct = len({e.get("agent") for e in examples})
         if n_distinct < MIN_AGENTS:
             continue
+        n_attempts += 1
         if synthesize_one(pattern, examples):
             n_synthed += 1
             if n_synthed >= MAX_PER_CYCLE:
                 break
+        if n_attempts >= max_attempts:
+            log_(f"  cap reached: {n_attempts} attempts, {n_synthed} synthed — yielding")
+            break
     return n_synthed > 0
 
 

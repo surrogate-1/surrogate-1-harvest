@@ -286,20 +286,28 @@ def call_llm(prompt: str, system: str = "", max_tokens: int = 1500,
 # ที่ resioning ดีๆ ตัวใหญ่กว่า เป็นคนตัดสินใจ ไม่ต้องมี human in the loop"
 # We force-route through the strongest available providers ONLY — no fast-path
 # fallback to 8B models, no surrogate-1 v1 — so decisions reflect real reasoning.
+#
+# Model names refreshed 2026-05-02:
+#   - Chutes: 'deepseek-ai/DeepSeek-V3' → 'DeepSeek-V3.2-TEE' (renamed
+#     after V3 EOL); added DeepSeek-R1 + Qwen3.5-397B for diversity.
+#   - xAI: removed — 'grok-2-1212' deprecated and tenant has no credits
+#     ('newly created team doesn't have any credits or licenses').
 _STRONG_CHAIN = [
-    # Provider, URL, env-key, model — ordered by quality / context length
-    ("Chutes-DeepSeek-V3",     "https://llm.chutes.ai/v1/chat/completions",
-     "CHUTES_API_KEY",         "deepseek-ai/DeepSeek-V3"),
-    ("SambaNova-Llama3.3-70B", "https://api.sambanova.ai/v1/chat/completions",
-     "SAMBANOVA_API_KEY",      "Meta-Llama-3.3-70B-Instruct"),
-    ("Groq-Llama3.3-70B",      "https://api.groq.com/openai/v1/chat/completions",
-     "GROQ_API_KEY",           "llama-3.3-70b-versatile"),
-    ("NVIDIA-Llama3.3-70B",    "https://integrate.api.nvidia.com/v1/chat/completions",
-     "NVIDIA_NIM_API_KEY",     "meta/llama-3.3-70b-instruct"),
-    ("OpenRouter-Llama3.3-70B","https://openrouter.ai/api/v1/chat/completions",
-     "OPENROUTER_API_KEY",     "meta-llama/llama-3.3-70b-instruct:free"),
-    ("xAI-Grok-2",             "https://api.x.ai/v1/chat/completions",
-     "GROK_API_KEY",           "grok-2-1212"),
+    # Provider, URL, env-key, model — ordered by reasoning quality / TPD
+    ("Chutes-DeepSeek-V3.2",      "https://llm.chutes.ai/v1/chat/completions",
+     "CHUTES_API_KEY",            "deepseek-ai/DeepSeek-V3.2-TEE"),
+    ("Chutes-Qwen3.5-397B",       "https://llm.chutes.ai/v1/chat/completions",
+     "CHUTES_API_KEY",            "Qwen/Qwen3.5-397B-A17B-TEE"),
+    ("Chutes-DeepSeek-R1-0528",   "https://llm.chutes.ai/v1/chat/completions",
+     "CHUTES_API_KEY",            "deepseek-ai/DeepSeek-R1-0528-TEE"),
+    ("SambaNova-Llama3.3-70B",    "https://api.sambanova.ai/v1/chat/completions",
+     "SAMBANOVA_API_KEY",         "Meta-Llama-3.3-70B-Instruct"),
+    ("Groq-Llama3.3-70B",         "https://api.groq.com/openai/v1/chat/completions",
+     "GROQ_API_KEY",              "llama-3.3-70b-versatile"),
+    ("NVIDIA-Llama3.3-70B",       "https://integrate.api.nvidia.com/v1/chat/completions",
+     "NVIDIA_NIM_API_KEY",        "meta/llama-3.3-70b-instruct"),
+    ("OpenRouter-Llama3.3-70B",   "https://openrouter.ai/api/v1/chat/completions",
+     "OPENROUTER_API_KEY",        "meta-llama/llama-3.3-70b-instruct:free"),
 ]
 
 
