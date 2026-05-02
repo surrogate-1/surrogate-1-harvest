@@ -65,11 +65,19 @@ _stop_evt = threading.Event()
 
 
 def _post_heartbeat(value: dict) -> None:
-    """POST to worker /agent/heartbeat. Best-effort, swallow all errors."""
+    """POST to worker /agent/heartbeat. Best-effort, swallow all errors.
+
+    CF treats Python's default urllib UA ('Python-urllib/3.x') as a bot
+    and returns 403. Setting an explicit User-Agent — anything non-default
+    — is enough. Use a daemon-identifying UA so the worker can log it.
+    """
     if not WORKER_URL:
         return
     body = json.dumps(value).encode()
-    headers = {"Content-Type": "application/json"}
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": f"surrogate-heartbeat/1.0 ({HOSTNAME})",
+    }
     if HEARTBEAT_AUTH:
         headers["X-Heartbeat-Token"] = HEARTBEAT_AUTH
     req = urllib.request.Request(WORKER_URL, data=body, method="POST",
