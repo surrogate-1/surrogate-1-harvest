@@ -15,12 +15,12 @@
 ## Active Codespace
 
 - Repo: `arkashira/surrogate-1-harvest`
-- Name: `ollama-llm-proxy-5g6677qpw4p4346xg`
+- Name: `ollama-llm-proxy-r49955gvjxqv3ww4`
 - Owner: `ashirapit`
 - Machine: `basicLinux32gb` (2-core, 8 GB RAM, 32 GB disk — free tier)
 - Idle timeout: 30 min
 - Port 11434 (ollama) → public via `gh codespace ports visibility 11434:public`
-- Public URL: `https://ollama-llm-proxy-5g6677qpw4p4346xg-11434.app.github.dev`
+- Public URL: `https://ollama-llm-proxy-r49955gvjxqv3ww4-11434.app.github.dev`
 
 ## Quota Math
 
@@ -41,16 +41,16 @@ Free tier = 60 core-hours/month/account on basicLinux32gb (= 2 cores).
 gh auth switch --user ashirapit
 
 # Check codespace state
-gh codespace view -c ollama-llm-proxy-5g6677qpw4p4346xg --json state,name
+gh codespace view -c ollama-llm-proxy-r49955gvjxqv3ww4 --json state,name
 
 # Stop early to save quota
-gh codespace stop -c ollama-llm-proxy-5g6677qpw4p4346xg
+gh codespace stop -c ollama-llm-proxy-r49955gvjxqv3ww4
 
 # Re-publish port if private after restart (rare)
-gh codespace ports visibility 11434:public -c ollama-llm-proxy-5g6677qpw4p4346xg
+gh codespace ports visibility 11434:public -c ollama-llm-proxy-r49955gvjxqv3ww4
 
 # Recreate (only if container hopelessly broken)
-gh codespace delete -c ollama-llm-proxy-5g6677qpw4p4346xg --force
+gh codespace delete -c ollama-llm-proxy-r49955gvjxqv3ww4 --force
 gh codespace create --repo arkashira/surrogate-1-harvest --branch main \
     --machine basicLinux32gb --display-name "ollama-llm-proxy" --idle-timeout 30m
 ```
@@ -61,7 +61,7 @@ The pipeline auto-uses the codespace as the deepest free LLM fallback when
 `CODESPACE_LLM_URL` is set in env. Both VMs need:
 
 ```env
-CODESPACE_LLM_URL=https://ollama-llm-proxy-5g6677qpw4p4346xg-11434.app.github.dev
+CODESPACE_LLM_URL=https://ollama-llm-proxy-r49955gvjxqv3ww4-11434.app.github.dev
 CODESPACE_LLM_MODEL=qwen2.5-coder:7b-instruct-q4_K_M
 ```
 
