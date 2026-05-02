@@ -184,13 +184,17 @@ def _cooldown(name: str, sec: float | None = None) -> None:
 
 
 def _hf_inference(messages: list, max_tokens: int, timeout: int,
-                  model: str = "meta-llama/Meta-Llama-3.1-70B-Instruct") -> str:
-    """Hugging Face Serverless Inference API — free tier ~1k req/h.
-    OpenAI-compatible chat completions endpoint at /v1.
-    Different infra from CF/Groq/etc → independent rate-limit budget."""
+                  model: str | None = None) -> str:
+    """Hugging Face Serverless Inference Router — uses 3rd-party providers
+    (Novita / Together / Fireworks / DeepInfra) with HF_TOKEN auth.
+
+    Default model: 'inclusionAI/Ling-2.6-1T' on Novita (pricing 0/0 = FREE).
+    Independent budget from CF/Groq/etc.
+    """
     tok = os.environ.get("HF_TOKEN", "")
     if not tok:
         raise RuntimeError("no HF_TOKEN")
+    model = model or os.environ.get("HF_ROUTER_MODEL", "inclusionAI/Ling-2.6-1T")
     url = "https://router.huggingface.co/v1/chat/completions"
     body = {"model": model, "messages": messages,
             "max_tokens": max_tokens, "temperature": 0.3}
@@ -242,9 +246,8 @@ def call_llm(prompt: str, system: str = "", max_tokens: int = 1500,
         ("NVIDIA-NIM",    "https://integrate.api.nvidia.com/v1/chat/completions",
          os.environ.get("NVIDIA_NIM_API_KEY") or os.environ.get("NVIDIA_API_KEY"),
          "meta/llama-3.3-70b-instruct"),
-        ("Kimi-K2",       "https://api.moonshot.ai/v1/chat/completions",
-         os.environ.get("KIMI_API_KEY") or os.environ.get("MOONSHOT_API_KEY"),
-         "kimi-k2-instruct"),
+        # Kimi removed 2026-05-02: KIMI_API_KEY auth fails ('Invalid
+        # Authentication'). Re-add when user rotates the key.
         ("OpenRouter",    "https://openrouter.ai/api/v1/chat/completions",
          os.environ.get("OPENROUTER_API_KEY"),
          "meta-llama/llama-3.3-70b-instruct:free"),
@@ -399,8 +402,7 @@ _STRONG_CHAIN = [
     # provide reasonable decision quality. Cerebras + Kimi.
     ("Cerebras-Llama3.3-70B",     "https://api.cerebras.ai/v1/chat/completions",
      "CEREBRAS_API_KEY",          "llama-3.3-70b"),
-    ("Kimi-K2-Instruct",          "https://api.moonshot.ai/v1/chat/completions",
-     "KIMI_API_KEY",              "kimi-k2-instruct"),
+    # Kimi removed (auth fails). Replaced with HF Router Ling-2.6-1T (free).
 ]
 
 
