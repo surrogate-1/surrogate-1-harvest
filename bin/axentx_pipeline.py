@@ -401,6 +401,11 @@ def new_item(project: str, focus: str, prompt: str) -> dict:
 
 
 def write_item(item: dict, stage: str) -> Path:
+    # Defensive mkdir on every write — protects against the queue dir being
+    # deleted out from under us at runtime (observed 2026-05-02: empty queue
+    # dirs silently disappeared, every dev → review handoff crashed with
+    # FileNotFoundError, pipeline starved for ~1h until manual mkdir).
+    QUEUES[stage].mkdir(parents=True, exist_ok=True)
     path = QUEUES[stage] / f"{item['id']}.json"
     item["stage"] = stage
     path.write_text(json.dumps(item, indent=2))
@@ -409,6 +414,7 @@ def write_item(item: dict, stage: str) -> Path:
 
 def pick_oldest(stage: str) -> tuple[Path, dict] | None:
     """Returns (path, item) for the oldest queued item, or None."""
+    QUEUES[stage].mkdir(parents=True, exist_ok=True)
     files = sorted(QUEUES[stage].glob("*.json"), key=lambda p: p.stat().st_mtime)
     for p in files:
         try:
