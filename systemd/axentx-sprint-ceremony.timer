@@ -1,0 +1,10 @@
+[Unit]
+Description=Run axentx ceremonies twice daily (02:00 + 10:00 UTC = 09:00 + 17:00 Bangkok)
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+OnCalendar=*-*-* 10:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

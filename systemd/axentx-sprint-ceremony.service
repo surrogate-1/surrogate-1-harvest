@@ -1,0 +1,12 @@
+[Unit]
+Description=axentx mini-sprint planning + retro
+After=surrogate-coordinator.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/opt/surrogate-1-harvest
+EnvironmentFile=/etc/surrogate-coordinator.env
+ExecStart=/bin/bash -c '/opt/surrogate-1-harvest/bin/claude-mini-sprint.sh && sleep 30 && /opt/surrogate-1-harvest/bin/claude-mini-retro.sh'
+StandardOutput=journal
+StandardError=journal
