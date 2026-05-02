@@ -6,3 +6,5 @@ __pycache__/
 SECRETS.md
 *.note
 data/hermes-last-run.json
+.wrangler/
+cf-worker/.wrangler/
